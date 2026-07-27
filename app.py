@@ -4,14 +4,110 @@ from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 from datetime import datetime
 import os
+import random
+import time
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
-    page_title="Control de Saldos - Ludo",
+    page_title="Ludo Control Saldos - Gaming Edition",
     page_icon="🎲",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
+
+# --- ESTILOS CSS PERSONALIZADOS (ESTILO GAMING / GASTOS DIARIOS) ---
+st.markdown("""
+<style>
+    /* Fondo principal estilo Gaming Dark */
+    .stApp {
+        background-color: #0E1117;
+        color: #F0F6FC;
+        font-family: 'Segoe UI', Roboto, sans-serif;
+    }
+    
+    /* Ocultar elementos nativos de Streamlit */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    
+    /* Tarjetas principales estilo Ficha/Card */
+    .gaming-card {
+        background: linear-gradient(135deg, #161B22 0%, #21262D 100%);
+        border: 1px solid #30363D;
+        border-radius: 16px;
+        padding: 20px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        text-align: center;
+        margin-bottom: 15px;
+        transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .gaming-card:hover {
+        border-color: #58A6FF;
+        transform: translateY(-2px);
+    }
+    
+    /* Ficha Gigante para Saldo */
+    .saldo-card {
+        background: linear-gradient(135deg, #1F293D 0%, #111827 100%);
+        border: 2px solid #38BDF8;
+        box-shadow: 0 0 20px rgba(56, 189, 248, 0.2);
+    }
+    .saldo-title {
+        color: #94A3B8;
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        font-weight: 700;
+        margin-bottom: 5px;
+    }
+    .saldo-amount {
+        color: #38BDF8;
+        font-size: 38px;
+        font-weight: 900;
+        text-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
+    }
+    
+    /* Botones Gigantes Táctiles */
+    .stButton>button {
+        width: 100%;
+        border-radius: 14px !important;
+        height: 3.2em !important;
+        font-size: 18px !important;
+        font-weight: 800 !important;
+        letter-spacing: 0.5px;
+        transition: all 0.2s ease-in-out !important;
+        border: none !important;
+    }
+    
+    /* Pestañas estilizadas */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background-color: #161B22;
+        padding: 8px;
+        border-radius: 14px;
+        border: 1px solid #30363D;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        border-radius: 10px;
+        color: #8B949E;
+        font-weight: 700;
+        font-size: 15px;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #238636 !important;
+        color: #FFFFFF !important;
+    }
+    
+    /* Personalización de Inputs */
+    div[data-baseweb="select"] > div, input {
+        background-color: #161B22 !important;
+        border-radius: 10px !important;
+        border-color: #30363D !important;
+        color: #FFFFFF !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # --- CONEXIÓN A GOOGLE SHEETS ---
 @st.cache_resource
@@ -20,7 +116,6 @@ def conectar_google_sheets():
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive"
     ]
-    
     archivo_json = "service_account.json"
     
     if os.path.exists(archivo_json):
@@ -39,7 +134,6 @@ try:
     sheet = conectar_google_sheets()
 except Exception as e:
     st.error(f"⚠️ Error de conexión con Google Sheets: {e}")
-    st.info("💡 Verifica tus credenciales de conexión.")
     st.stop()
 
 # --- FUNCIONES DE APOYO ---
@@ -50,6 +144,7 @@ def obtener_datos():
         df = pd.DataFrame(columns=["Fecha", "Hora", "Cliente", "Tipo", "Monto", "Detalle"])
     else:
         df["Monto"] = pd.to_numeric(df["Monto"], errors="coerce").fillna(0)
+        df["Fecha"] = df["Fecha"].astype(str)
     return df
 
 def guardar_movimiento(fecha, hora, cliente, tipo, monto, detalle):
@@ -68,89 +163,207 @@ def calcular_neto(row):
 df_movimientos = obtener_datos()
 clientes_base = ["Dani", "Mis amores", "Wis", "Wilson"]
 clientes_existentes = sorted(list(set(clientes_base + df_movimientos["Cliente"].dropna().unique().tolist())))
+fecha_hoy_str = datetime.now().strftime("%Y-%m-%d")
 
-# --- CONTROL DE ACCESO / MENU LATERAL ---
-st.sidebar.title("🎲 Control de Saldos")
-modo_acceso = st.sidebar.radio(
-    "Selecciona el modo de uso:",
-    ["👤 Consulta Jugadores (Solo Lectura)", "🔐 Modo Administrador"]
+# --- ENCABEZADO GAMING ---
+st.markdown("""
+    <div style='text-align: center; padding: 10px 0 20px 0;'>
+        <h1 style='font-size: 36px; font-weight: 900; color: #58A6FF; margin: 0;'>🎲 LUDO CONTROL</h1>
+        <p style='color: #8B949E; font-weight: 600; font-size: 14px;'>SISTEMA DE SALDOS & RANKING DE JUGADORES</p>
+    </div>
+""", unsafe_allow_html=True)
+
+# --- NAVEGACIÓN PRINCIPAL ---
+modo_acceso = st.radio(
+    "",
+    ["👤 MODO JUGADOR", "🔐 MODO ADMINISTRADOR"],
+    horizontal=True,
+    label_visibility="collapsed"
 )
 
-st.sidebar.divider()
+st.markdown("<br>", unsafe_allow_html=True)
 
 # ==============================================================================
-# MODO 1: CONSULTA PARA JUGADORES (SOLO LECTURA)
+# MODO 1: CONSULTA PARA JUGADORES (GAMING UI)
 # ==============================================================================
-if modo_acceso == "👤 Consulta Jugadores (Solo Lectura)":
-    st.title("📱 Consulta de Saldos - Apuestas Ludo")
-    st.caption("Selecciona tu nombre para revisar tu saldo y movimientos en tiempo real.")
+if modo_acceso == "👤 MODO JUGADOR":
+    
+    tab_saldo, tab_ranking, tab_ruleta = st.tabs([
+        "💰 MI SALDO", 
+        "🏆 RANKING Y DESAFÍO", 
+        "🎡 RULETA DIARIA"
+    ])
 
-    if not df_movimientos.empty:
-        jugador_seleccionado = st.selectbox(
-            "👇 Busca y selecciona tu nombre de jugador:",
-            ["-- Seleccionar Jugador --"] + clientes_existentes
-        )
+    # --- TAB 1: SALDO DE JUGADOR ---
+    with tab_saldo:
+        if not df_movimientos.empty:
+            jugador_seleccionado = st.selectbox(
+                "👇 SELECCIONA TU NOMBRE DE JUGADOR:",
+                ["-- Seleccionar Jugador --"] + clientes_existentes
+            )
 
-        if jugador_seleccionado != "-- Seleccionar Jugador --":
-            df_jugador = df_movimientos[df_movimientos["Cliente"] == jugador_seleccionado].copy()
+            if jugador_seleccionado != "-- Seleccionar Jugador --":
+                df_jugador = df_movimientos[df_movimientos["Cliente"] == jugador_seleccionado].copy()
 
-            if not df_jugador.empty:
-                df_jugador["Neto"] = df_jugador.apply(calcular_neto, axis=1)
-                saldo_actual = df_jugador["Neto"].sum()
+                if not df_jugador.empty:
+                    df_jugador["Neto"] = df_jugador.apply(calcular_neto, axis=1)
+                    saldo_actual = df_jugador["Neto"].sum()
 
-                st.markdown("---")
-                col1, col2 = st.columns([1, 2])
-                with col1:
-                    st.metric(
-                        label=f"Saldo Neto Actual de {jugador_seleccionado}",
-                        value=f"${saldo_actual:,.2f}"
+                    partidas_jugadas_hoy = len(df_jugador[(df_jugador["Fecha"] == fecha_hoy_str) & (df_jugador["Tipo"] == "🔴 Partida jugada (-)")])
+                    partidas_ganadas_hoy = len(df_jugador[(df_jugador["Fecha"] == fecha_hoy_str) & (df_jugador["Tipo"] == "🟡 Partida ganada (+)")])
+
+                    # FICHA PRINCIPAL DE SALDO
+                    st.markdown(f"""
+                        <div class="gaming-card saldo-card">
+                            <div class="saldo-title">SALDO NETO DISPONIBLE</div>
+                            <div class="saldo-amount">${saldo_actual:,.2f}</div>
+                            <div style="color: #94A3B8; font-size: 13px; margin-top: 5px;">Jugador: <b>{jugador_seleccionado}</b></div>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+                    # FICHAS SECUNDARIAS DE ESTADÍSTICAS
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown(f"""
+                            <div class="gaming-card">
+                                <div style="font-size: 24px;">🎮 {partidas_jugadas_hoy} / 3</div>
+                                <div style="color: #8B949E; font-size: 12px; font-weight: 700;">JUGADAS HOY</div>
+                            </div>
+                        """, unsafe_allow_html=True)
+                    with col2:
+                        st.markdown(f"""
+                            <div class="gaming-card">
+                                <div style="font-size: 24px;">🏆 {partidas_ganadas_hoy}</div>
+                                <div style="color: #8B949E; font-size: 12px; font-weight: 700;">VICTORIAS HOY</div>
+                            </div>
+                        """, unsafe_allow_html=True)
+
+                    if partidas_jugadas_hoy >= 3:
+                        st.success("🎉 ¡DESAFÍO COMPLETADO! Estás dentro del sorteo de la ruleta hoy.")
+                    else:
+                        st.info(f"🎯 Juega {3 - partidas_jugadas_hoy} partida(s) más hoy para entrar a la ruleta.")
+
+                    st.markdown("### 📜 HISTORIAL RECIENTE")
+                    df_mostrar = df_jugador[["Fecha", "Hora", "Tipo", "Monto", "Detalle"]].iloc[::-1].reset_index(drop=True)
+                    st.dataframe(
+                        df_mostrar.style.format({"Monto": "${:,.2f}"}),
+                        use_container_width=True,
+                        hide_index=True
                     )
-                
-                st.subheader("📜 Tu Historial de Movimientos")
-                df_mostrar = df_jugador[["Fecha", "Hora", "Tipo", "Monto", "Detalle"]].iloc[::-1].reset_index(drop=True)
-                
-                st.dataframe(
-                    df_mostrar.style.format({"Monto": "${:,.2f}"}),
-                    use_container_width=True,
-                    hide_index=True
-                )
-            else:
-                st.info(f"Hola {jugador_seleccionado}, aún no tienes partidas ni movimientos registrados.")
+                else:
+                    st.info(f"Hola {jugador_seleccionado}, aún no registras movimientos.")
         else:
-            st.info("👆 Por favor selecciona tu nombre en la lista de arriba para desplegar tus datos.")
-    else:
-        st.info("No hay movimientos registrados en el sistema todavía.")
+            st.info("Sin registros en la base de datos.")
+
+    # --- TAB 2: RANKING ---
+    with tab_ranking:
+        st.markdown("### 🥇 PODIO DE CAMPEONES")
+        filtro_rango = st.radio("Período:", ["Hoy", "Histórico General"], horizontal=True)
+
+        if not df_movimientos.empty:
+            if filtro_rango == "Hoy":
+                df_ganadores = df_movimientos[(df_movimientos["Fecha"] == fecha_hoy_str) & (df_movimientos["Tipo"] == "🟡 Partida ganada (+)")]
+            else:
+                df_ganadores = df_movimientos[df_movimientos["Tipo"] == "🟡 Partida ganada (+)"]
+
+            if not df_ganadores.empty:
+                ranking_df = df_ganadores.groupby("Cliente").size().reset_index(name="Victorias")
+                ranking_df = ranking_df.sort_values(by="Victorias", ascending=False).reset_index(drop=True)
+
+                col_p1, col_p2, col_p3 = st.columns(3)
+                
+                if len(ranking_df) >= 1:
+                    col_p1.markdown(f"""
+                        <div class="gaming-card" style="border-color: #FFD700;">
+                            <div style="font-size: 30px;">🥇</div>
+                            <div style="font-weight: 800; font-size: 18px; color: #FFD700;">{ranking_df.iloc[0]['Cliente']}</div>
+                            <div style="color: #8B949E; font-size: 13px;">{ranking_df.iloc[0]['Victorias']} Victorias</div>
+                        </div>
+                    """, unsafe_allow_html=True)
+                if len(ranking_df) >= 2:
+                    col_p2.markdown(f"""
+                        <div class="gaming-card" style="border-color: #C0C0C0;">
+                            <div style="font-size: 30px;">🥈</div>
+                            <div style="font-weight: 800; font-size: 18px; color: #C0C0C0;">{ranking_df.iloc[1]['Cliente']}</div>
+                            <div style="color: #8B949E; font-size: 13px;">{ranking_df.iloc[1]['Victorias']} Victorias</div>
+                        </div>
+                    """, unsafe_allow_html=True)
+                if len(ranking_df) >= 3:
+                    col_p3.markdown(f"""
+                        <div class="gaming-card" style="border-color: #CD7F32;">
+                            <div style="font-size: 30px;">🥉</div>
+                            <div style="font-weight: 800; font-size: 18px; color: #CD7F32;">{ranking_df.iloc[2]['Cliente']}</div>
+                            <div style="color: #8B949E; font-size: 13px;">{ranking_df.iloc[2]['Victorias']} Victorias</div>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+                st.markdown("### 📊 TABLA GENERAL DE LÍDERES")
+                ranking_df.index += 1
+                st.dataframe(ranking_df, use_container_width=True)
+            else:
+                st.info("Sin partidas ganadas en este lapso de tiempo.")
+
+    # --- TAB 3: RULETA GIRATORIA ---
+    with tab_ruleta:
+        st.markdown("### 🎡 SORTEO DE RULETA DIARIA")
+        st.caption("Participan únicamente los jugadores con 3 o más partidas jugadas hoy.")
+
+        if not df_movimientos.empty:
+            df_jugadas_hoy = df_movimientos[(df_movimientos["Fecha"] == fecha_hoy_str) & (df_movimientos["Tipo"] == "🔴 Partida jugada (-)")]
+            conteo = df_jugadas_hoy.groupby("Cliente").size().reset_index(name="Cant")
+            calificados_list = conteo[conteo["Cant"] >= 3]["Cliente"].tolist()
+
+            if len(calificados_list) > 0:
+                st.write(f"👥 **Jugadores Calificados ({len(calificados_list)}):**")
+                cols_cal = st.columns(len(calificados_list))
+                for idx, nom in enumerate(calificados_list):
+                    cols_cal[idx].markdown(f"<div class='gaming-card' style='padding: 10px; font-weight: bold; color: #238636;'>✅ {nom}</div>", unsafe_allow_html=True)
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                if st.button("🎡 ¡GIRAR RULETA AHORA!", type="primary"):
+                    placeholder = st.empty()
+                    for i in range(25):
+                        seleccionado_temp = random.choice(calificados_list)
+                        placeholder.markdown(f"""
+                            <div class="gaming-card" style="border-color: #A371F7; padding: 30px;">
+                                <div style="font-size: 14px; color: #A371F7; font-weight: 800;">GIRANDO RULETA...</div>
+                                <div style="font-size: 38px; font-weight: 900; color: #FFFFFF;">🔄 {seleccionado_temp} 🔄</div>
+                            </div>
+                        """, unsafe_allow_html=True)
+                        time.sleep(0.08 + (i * 0.01))
+                    
+                    ganador_final = random.choice(calificados_list)
+                    placeholder.markdown(f"""
+                        <div class="gaming-card" style="border-color: #238636; background: linear-gradient(135deg, #1C4429 0%, #111827 100%); padding: 35px;">
+                            <div style="font-size: 16px; color: #3FB950; font-weight: 800;">🎉 ¡GANADOR DEL PREMIO EXTRA! 🎉</div>
+                            <div style="font-size: 42px; font-weight: 900; color: #FFFFFF; text-shadow: 0 0 10px #3FB950;">👑 {ganador_final} 👑</div>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    st.balloons()
+            else:
+                st.warning("⚠️ Aún no hay jugadores calificados con 3 partidas hoy para girar la ruleta.")
 
 # ==============================================================================
 # MODO 2: ADMINISTRADOR (PROTEGIDO POR CLAVE)
 # ==============================================================================
 else:
-    st.sidebar.header("🔑 Acceso Administrador")
-    
+    st.markdown("### 🔑 ACCESO ADMINISTRADOR")
     CLAVE_ADMIN = "ludo21010227" 
     
-    with st.sidebar.form(key="form_login"):
-        password = st.text_input("Ingresa la clave de admin:", type="password")
-        btn_login = st.form_submit_button("🔓 Entrar", use_container_width=True)
+    password = st.text_input("Ingresa la contraseña de gestión:", type="password")
 
     if password == CLAVE_ADMIN:
-        st.sidebar.success("✅ Acceso Concedido")
-        st.sidebar.header("➕ Nuevo Movimiento")
+        st.success("✅ Modo Administrador Activo")
+        
+        with st.expander("➕ REGISTRAR NUEVO MOVIMIENTO", expanded=True):
+            opcion_cliente = st.radio("Cliente:", ["Existente", "➕ Nuevo"], horizontal=True)
 
-        # 1. SELECCIÓN DE TIPO DE JUGADOR
-        opcion_cliente = st.sidebar.radio(
-            "Tipo de Jugador:", 
-            ["Existente", "➕ Nuevo Cliente"], 
-            horizontal=True
-        )
+            if opcion_cliente == "Existente":
+                cliente_final = st.selectbox("Seleccionar Jugador:", clientes_existentes)
+            else:
+                cliente_final = st.text_input("Nombre del Nuevo Jugador:").strip()
 
-        if opcion_cliente == "Existente":
-            cliente_final = st.sidebar.selectbox("Seleccionar Jugador:", clientes_existentes)
-        else:
-            cliente_final = st.sidebar.text_input("Escribe el Nombre del Nuevo Jugador:").strip()
-
-        # 2. RESTO DE CAMPOS DENTRO DEL FORMULARIO DE ENVÍO
-        with st.sidebar.form(key="form_datos_movimiento", clear_on_submit=True):
             opciones_tipo = [
                 "🟢 Saldo agregado (+)",
                 "🔴 Partida jugada (-)",
@@ -161,12 +374,9 @@ else:
             tipo_movimiento = st.selectbox("Tipo de Movimiento:", opciones_tipo)
             monto = st.number_input("Monto ($):", min_value=0.0, step=1.0, format="%.2f", value=0.0)
 
-            # SELECTOR DE FECHA Y HORA EN FORMATO 12H (AM/PM) CON NÚMEROS MANUALES
             fecha_actual = st.date_input("Fecha:", datetime.now().date())
             
-            st.write("🕒 **Hora del Movimiento:**")
             col_h1, col_h2, col_ampm = st.columns([1, 1, 1])
-
             hora_now = datetime.now()
             h_12_default = hora_now.hour % 12
             if h_12_default == 0:
@@ -178,33 +388,27 @@ else:
             ampm = col_ampm.selectbox("Período:", ["AM", "PM"], index=0 if ampm_default == "AM" else 1)
 
             hora_formateada = f"{hora_num:02d}:{min_num:02d} {ampm}"
+            detalle = st.text_input("Observaciones:", placeholder="Mesa 1, Nequi, etc.")
 
-            detalle = st.text_input("Observaciones (Opcional):", placeholder="Ej: Mesa 1, Nequi...")
+            if st.button("💾 GUARDAR TRANSACCIÓN", type="primary"):
+                if not cliente_final:
+                    st.error("❌ Escribe el nombre del jugador.")
+                elif monto <= 0:
+                    st.error("❌ El monto debe ser mayor a 0.")
+                else:
+                    with st.spinner("Guardando..."):
+                        guardar_movimiento(
+                            fecha_actual.strftime("%Y-%m-%d"),
+                            hora_formateada,
+                            cliente_final,
+                            tipo_movimiento,
+                            monto,
+                            detalle
+                        )
+                        st.toast("✅ Transacción guardada con éxito", icon="🎉")
+                        st.rerun()
 
-            boton_guardar = st.form_submit_button("💾 Guardar Transacción", use_container_width=True, type="primary")
-
-        if boton_guardar:
-            if not cliente_final:
-                st.sidebar.error("❌ Debes seleccionar o escribir el nombre de un jugador.")
-            elif monto <= 0:
-                st.sidebar.error("❌ El monto debe ser mayor a 0.")
-            else:
-                with st.spinner("Guardando en Google Sheets..."):
-                    guardar_movimiento(
-                        fecha_actual.strftime("%Y-%m-%d"),
-                        hora_formateada,
-                        cliente_final,
-                        tipo_movimiento,
-                        monto,
-                        detalle
-                    )
-                    st.toast("✅ ¡Movimiento registrado exitosamente!", icon="🎉")
-                    st.rerun()
-
-        # PANEL PRINCIPAL DE ADMINISTRACIÓN
-        st.title("🎲 Panel de Administración")
-
-        st.subheader("📊 Consolidado General de Saldos")
+        st.markdown("### 📊 CONSOLIDADO GENERAL DE SALDOS")
         if not df_movimientos.empty:
             df_calc = df_movimientos.copy()
             df_calc["Neto"] = df_calc.apply(calcular_neto, axis=1)
@@ -218,20 +422,13 @@ else:
                 use_container_width=True,
                 hide_index=True
             )
-        else:
-            st.info("Sin registros.")
 
-        st.divider()
-
-        st.subheader("📜 Historial Completo (Todas las transacciones)")
+        st.markdown("### 📜 HISTORIAL COMPLETO DE REGISTROS")
         if not df_movimientos.empty:
             st.dataframe(
                 df_movimientos.iloc[::-1].reset_index(drop=True).style.format({"Monto": "${:,.2f}"}),
                 use_container_width=True,
                 hide_index=True
             )
-
     elif password != "":
-        st.sidebar.error("🔒 Contraseña incorrecta.")
-    else:
-        st.warning("⚠️ Ingresa la clave de administrador en la barra lateral para acceder a la gestión.")
+        st.error("🔒 Contraseña incorrecta.")
