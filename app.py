@@ -39,7 +39,7 @@ try:
     sheet = conectar_google_sheets()
 except Exception as e:
     st.error(f"⚠️ Error de conexión con Google Sheets: {e}")
-    st.info("💡 Verifica que el archivo de credenciales se llame 'service_account.json' y esté en la misma carpeta que app.py.")
+    st.info("💡 Verifica tus credenciales de conexión.")
     st.stop()
 
 # --- FUNCIONES DE APOYO ---
@@ -106,7 +106,7 @@ if modo_acceso == "👤 Consulta Jugadores (Solo Lectura)":
                         value=f"${saldo_actual:,.2f}"
                     )
                 
-                st.subheader(f"📜 Tu Historial de Movimientos")
+                st.subheader("📜 Tu Historial de Movimientos")
                 df_mostrar = df_jugador[["Fecha", "Hora", "Tipo", "Monto", "Detalle"]].iloc[::-1].reset_index(drop=True)
                 
                 st.dataframe(
@@ -137,14 +137,13 @@ else:
         st.sidebar.success("✅ Acceso Concedido")
         st.sidebar.header("➕ Nuevo Movimiento")
 
-        # 1. SELECCIÓN DE TIPO DE JUGADOR (FUERA DEL FORMULARIO PARA RESPUESTA INSTANTÁNEA)
+        # 1. SELECCIÓN DE TIPO DE JUGADOR
         opcion_cliente = st.sidebar.radio(
             "Tipo de Jugador:", 
             ["Existente", "➕ Nuevo Cliente"], 
             horizontal=True
         )
 
-        # MOSTRAR EL CAMPO CORRESPONDIENTE SEGÚN LA ELECCIÓN
         if opcion_cliente == "Existente":
             cliente_final = st.sidebar.selectbox("Seleccionar Jugador:", clientes_existentes)
         else:
@@ -162,9 +161,23 @@ else:
             tipo_movimiento = st.selectbox("Tipo de Movimiento:", opciones_tipo)
             monto = st.number_input("Monto ($):", min_value=0.0, step=1.0, format="%.2f", value=0.0)
 
-            col_f, col_h = st.columns(2)
-            fecha_actual = col_f.date_input("Fecha:", datetime.now().date())
-            hora_actual = col_h.time_input("Hora:", datetime.now().time())
+            # SELECTOR DE FECHA Y HORA EN FORMATO 12H (AM/PM) CON NÚMEROS MANUALES
+            fecha_actual = st.date_input("Fecha:", datetime.now().date())
+            
+            st.write("🕒 **Hora del Movimiento:**")
+            col_h1, col_h2, col_ampm = st.columns([1, 1, 1])
+
+            hora_now = datetime.now()
+            h_12_default = hora_now.hour % 12
+            if h_12_default == 0:
+                h_12_default = 12
+            ampm_default = "PM" if hora_now.hour >= 12 else "AM"
+
+            hora_num = col_h1.number_input("Hora (1-12):", min_value=1, max_value=12, value=h_12_default, step=1)
+            min_num = col_h2.number_input("Min (0-59):", min_value=0, max_value=59, value=hora_now.minute, step=1)
+            ampm = col_ampm.selectbox("Período:", ["AM", "PM"], index=0 if ampm_default == "AM" else 1)
+
+            hora_formateada = f"{hora_num:02d}:{min_num:02d} {ampm}"
 
             detalle = st.text_input("Observaciones (Opcional):", placeholder="Ej: Mesa 1, Nequi...")
 
@@ -179,7 +192,7 @@ else:
                 with st.spinner("Guardando en Google Sheets..."):
                     guardar_movimiento(
                         fecha_actual.strftime("%Y-%m-%d"),
-                        hora_actual.strftime("%H:%M:%S"),
+                        hora_formateada,
                         cliente_final,
                         tipo_movimiento,
                         monto,
