@@ -18,19 +18,16 @@ st.set_page_config(
 # --- ESTILOS CSS PERSONALIZADOS (ESTILO GAMING / GASTOS DIARIOS) ---
 st.markdown("""
 <style>
-    /* Fondo principal estilo Gaming Dark */
     .stApp {
         background-color: #0E1117;
         color: #F0F6FC;
         font-family: 'Segoe UI', Roboto, sans-serif;
     }
     
-    /* Ocultar elementos nativos de Streamlit */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
     
-    /* Tarjetas principales estilo Ficha/Card */
     .gaming-card {
         background: linear-gradient(135deg, #161B22 0%, #21262D 100%);
         border: 1px solid #30363D;
@@ -46,7 +43,6 @@ st.markdown("""
         transform: translateY(-2px);
     }
     
-    /* Ficha Gigante para Saldo */
     .saldo-card {
         background: linear-gradient(135deg, #1F293D 0%, #111827 100%);
         border: 2px solid #38BDF8;
@@ -67,7 +63,6 @@ st.markdown("""
         text-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
     }
     
-    /* Botones Gigantes Táctiles */
     .stButton>button {
         width: 100%;
         border-radius: 14px !important;
@@ -79,7 +74,6 @@ st.markdown("""
         border: none !important;
     }
     
-    /* Pestañas estilizadas */
     .stTabs [data-baseweb="tab-list"] {
         gap: 8px;
         background-color: #161B22;
@@ -99,7 +93,6 @@ st.markdown("""
         color: #FFFFFF !important;
     }
     
-    /* Personalización de Inputs */
     div[data-baseweb="select"] > div, input {
         background-color: #161B22 !important;
         border-radius: 10px !important;
@@ -165,6 +158,10 @@ clientes_base = ["Dani", "Mis amores", "Wis", "Wilson"]
 clientes_existentes = sorted(list(set(clientes_base + df_movimientos["Cliente"].dropna().unique().tolist())))
 fecha_hoy_str = datetime.now().strftime("%Y-%m-%d")
 
+# Inicializar estado en memoria para el ganador del día
+if "ganador_ruleta_hoy" not in st.session_state:
+    st.session_state["ganador_ruleta_hoy"] = None
+
 # --- ENCABEZADO GAMING ---
 st.markdown("""
     <div style='text-align: center; padding: 10px 0 20px 0;'>
@@ -184,7 +181,7 @@ modo_acceso = st.radio(
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ==============================================================================
-# MODO 1: CONSULTA PARA JUGADORES (GAMING UI)
+# MODO 1: CONSULTA PARA JUGADORES (SOLO LECTURA DE GANADOR)
 # ==============================================================================
 if modo_acceso == "👤 MODO JUGADOR":
     
@@ -212,7 +209,6 @@ if modo_acceso == "👤 MODO JUGADOR":
                     partidas_jugadas_hoy = len(df_jugador[(df_jugador["Fecha"] == fecha_hoy_str) & (df_jugador["Tipo"] == "🔴 Partida jugada (-)")])
                     partidas_ganadas_hoy = len(df_jugador[(df_jugador["Fecha"] == fecha_hoy_str) & (df_jugador["Tipo"] == "🟡 Partida ganada (+)")])
 
-                    # FICHA PRINCIPAL DE SALDO
                     st.markdown(f"""
                         <div class="gaming-card saldo-card">
                             <div class="saldo-title">SALDO NETO DISPONIBLE</div>
@@ -221,7 +217,6 @@ if modo_acceso == "👤 MODO JUGADOR":
                         </div>
                     """, unsafe_allow_html=True)
 
-                    # FICHAS SECUNDARIAS DE ESTADÍSTICAS
                     col1, col2 = st.columns(2)
                     with col1:
                         st.markdown(f"""
@@ -303,10 +298,10 @@ if modo_acceso == "👤 MODO JUGADOR":
             else:
                 st.info("Sin partidas ganadas en este lapso de tiempo.")
 
-    # --- TAB 3: RULETA GIRATORIA ---
+    # --- TAB 3: RULETA GIRATORIA (VISTA JUGADOR) ---
     with tab_ruleta:
         st.markdown("### 🎡 SORTEO DE RULETA DIARIA")
-        st.caption("Participan únicamente los jugadores con 3 o más partidas jugadas hoy.")
+        st.caption("Entran automáticamente los jugadores que hayan alcanzado 3 o más partidas hoy.")
 
         if not df_movimientos.empty:
             df_jugadas_hoy = df_movimientos[(df_movimientos["Fecha"] == fecha_hoy_str) & (df_movimientos["Tipo"] == "🔴 Partida jugada (-)")]
@@ -314,49 +309,75 @@ if modo_acceso == "👤 MODO JUGADOR":
             calificados_list = conteo[conteo["Cant"] >= 3]["Cliente"].tolist()
 
             if len(calificados_list) > 0:
-                st.write(f"👥 **Jugadores Calificados ({len(calificados_list)}):**")
+                st.write(f"👥 **Jugadores Calificados Hoy ({len(calificados_list)}):**")
                 cols_cal = st.columns(len(calificados_list))
                 for idx, nom in enumerate(calificados_list):
                     cols_cal[idx].markdown(f"<div class='gaming-card' style='padding: 10px; font-weight: bold; color: #238636;'>✅ {nom}</div>", unsafe_allow_html=True)
 
                 st.markdown("<br>", unsafe_allow_html=True)
-                
-                if st.button("🎡 ¡GIRAR RULETA AHORA!", type="primary"):
-                    placeholder = st.empty()
-                    for i in range(25):
-                        seleccionado_temp = random.choice(calificados_list)
-                        placeholder.markdown(f"""
-                            <div class="gaming-card" style="border-color: #A371F7; padding: 30px;">
-                                <div style="font-size: 14px; color: #A371F7; font-weight: 800;">GIRANDO RULETA...</div>
-                                <div style="font-size: 38px; font-weight: 900; color: #FFFFFF;">🔄 {seleccionado_temp} 🔄</div>
-                            </div>
-                        """, unsafe_allow_html=True)
-                        time.sleep(0.08 + (i * 0.01))
-                    
-                    ganador_final = random.choice(calificados_list)
-                    placeholder.markdown(f"""
+
+                # Mostrar Ganador si la admin ya giró la ruleta
+                if st.session_state["ganador_ruleta_hoy"]:
+                    st.markdown(f"""
                         <div class="gaming-card" style="border-color: #238636; background: linear-gradient(135deg, #1C4429 0%, #111827 100%); padding: 35px;">
-                            <div style="font-size: 16px; color: #3FB950; font-weight: 800;">🎉 ¡GANADOR DEL PREMIO EXTRA! 🎉</div>
-                            <div style="font-size: 42px; font-weight: 900; color: #FFFFFF; text-shadow: 0 0 10px #3FB950;">👑 {ganador_final} 👑</div>
+                            <div style="font-size: 16px; color: #3FB950; font-weight: 800;">🎉 ¡GANADOR OFICIAL DEL SORTEO DE HOY! 🎉</div>
+                            <div style="font-size: 42px; font-weight: 900; color: #FFFFFF; text-shadow: 0 0 10px #3FB950;">👑 {st.session_state['ganador_ruleta_hoy']} 👑</div>
                         </div>
                     """, unsafe_allow_html=True)
-                    st.balloons()
+                else:
+                    st.info("⏳ La ruleta aún no ha sido girada el día de hoy. El administrador la girará al final de la jornada.")
             else:
-                st.warning("⚠️ Aún no hay jugadores calificados con 3 partidas hoy para girar la ruleta.")
+                st.warning("⚠️ Aún no hay jugadores calificados con 3 partidas hoy.")
 
 # ==============================================================================
-# MODO 2: ADMINISTRADOR (PROTEGIDO POR CLAVE)
+# MODO 2: ADMINISTRADOR (BOTÓN EXCLUSIVO PARA GIRAR RULETA)
 # ==============================================================================
 else:
     st.markdown("### 🔑 ACCESO ADMINISTRADOR")
-    CLAVE_ADMIN = "ludo21010227" 
+    CLAVE_ADMIN = "ludo123" 
     
     password = st.text_input("Ingresa la contraseña de gestión:", type="password")
 
     if password == CLAVE_ADMIN:
         st.success("✅ Modo Administrador Activo")
         
-        with st.expander("➕ REGISTRAR NUEVO MOVIMIENTO", expanded=True):
+        # --- SECCIÓN EXCLUSIVA DE GESTIÓN DE RULETA ---
+        with st.expander("🎡 CONTROL DE RULETA DIARIA (EXCLUSIVO ADMIN)", expanded=True):
+            if not df_movimientos.empty:
+                df_jugadas_hoy = df_movimientos[(df_movimientos["Fecha"] == fecha_hoy_str) & (df_movimientos["Tipo"] == "🔴 Partida jugada (-)")]
+                conteo = df_jugadas_hoy.groupby("Cliente").size().reset_index(name="Cant")
+                calificados_list = conteo[conteo["Cant"] >= 3]["Cliente"].tolist()
+
+                if len(calificados_list) > 0:
+                    st.write(f"👥 **Participantes Calificados para Girar:** {', '.join(calificados_list)}")
+                    
+                    if st.button("🎡 ¡GIRAR RULETA AHORA!", type="primary"):
+                        placeholder = st.empty()
+                        for i in range(25):
+                            seleccionado_temp = random.choice(calificados_list)
+                            placeholder.markdown(f"""
+                                <div class="gaming-card" style="border-color: #A371F7; padding: 30px;">
+                                    <div style="font-size: 14px; color: #A371F7; font-weight: 800;">GIRANDO RULETA EN VIVO...</div>
+                                    <div style="font-size: 38px; font-weight: 900; color: #FFFFFF;">🔄 {seleccionado_temp} 🔄</div>
+                                </div>
+                            """, unsafe_allow_html=True)
+                            time.sleep(0.08 + (i * 0.01))
+                        
+                        ganador_final = random.choice(calificados_list)
+                        st.session_state["ganador_ruleta_hoy"] = ganador_final
+                        
+                        placeholder.markdown(f"""
+                            <div class="gaming-card" style="border-color: #238636; background: linear-gradient(135deg, #1C4429 0%, #111827 100%); padding: 35px;">
+                                <div style="font-size: 16px; color: #3FB950; font-weight: 800;">🎉 ¡GANADOR DEL PREMIO EXTRA! 🎉</div>
+                                <div style="font-size: 42px; font-weight: 900; color: #FFFFFF; text-shadow: 0 0 10px #3FB950;">👑 {ganador_final} 👑</div>
+                            </div>
+                        """, unsafe_allow_html=True)
+                        st.balloons()
+                else:
+                    st.info("⚠️ Aún no hay jugadores calificados para girar la ruleta hoy.")
+        
+        # --- REGISTRO DE MOVIMIENTOS ---
+        with st.expander("➕ REGISTRAR NUEVO MOVIMIENTO", expanded=False):
             opcion_cliente = st.radio("Cliente:", ["Existente", "➕ Nuevo"], horizontal=True)
 
             if opcion_cliente == "Existente":
