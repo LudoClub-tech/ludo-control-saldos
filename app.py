@@ -330,7 +330,7 @@ if modo_acceso == "👤 MODO JUGADOR":
                 st.warning("⚠️ Aún no hay jugadores calificados con 3 partidas hoy.")
 
 # ==============================================================================
-# MODO 2: ADMINISTRADOR (🔑 CON LIMPIEZA AUTOMÁTICA DE CAMPOS Y PROTECCIÓN)
+# MODO 2: ADMINISTRADOR (🔑 CON AUTOLIMPIEZA Y SELECTOR INTERACTIVO)
 # ==============================================================================
 else:
     st.markdown("### 🔑 ACCESO ADMINISTRADOR")
@@ -341,6 +341,12 @@ else:
     if password == CLAVE_ADMIN:
         st.success("✅ Modo Administrador Activo")
         
+        # Inicializar clave del monto en session_state para poder limpiarlo dinámicamente
+        if "monto_input" not in st.session_state:
+            st.session_state["monto_input"] = 0.0
+        if "detalle_input" not in st.session_state:
+            st.session_state["detalle_input"] = ""
+
         # --- SECCIÓN EXCLUSIVA DE GESTIÓN DE RULETA ---
         with st.expander("🎡 CONTROL DE RULETA DIARIA (EXCLUSIVO ADMIN)", expanded=True):
             if not df_movimientos.empty:
@@ -376,47 +382,46 @@ else:
                 else:
                     st.info("⚠️ Aún no hay jugadores calificados para girar la ruleta hoy.")
         
-        # --- REGISTRO DE MOVIMIENTOS CON AUTO-LIMPIEZA DE MONTO ---
+        # --- REGISTRO DE MOVIMIENTOS ---
         with st.expander("➕ REGISTRAR NUEVO MOVIMIENTO", expanded=True):
             
-            # 💡 AL USAR clear_on_submit=True, EL FORMULARIO REINICIA EL MONTO A 0.0 TRAS GUARDAR
-            with st.form("form_registro_movimiento", clear_on_submit=True):
-                opcion_cliente = st.radio("Cliente:", ["Existente", "➕ Nuevo"], horizontal=True)
+            # 1. Selector interactivo fuera de st.form para alternar entre Existente y Nuevo en tiempo real
+            opcion_cliente = st.radio("Cliente:", ["Existente", "➕ Nuevo"], horizontal=True)
 
-                if opcion_cliente == "Existente":
-                    cliente_final = st.selectbox("Seleccionar Jugador:", clientes_existentes)
-                else:
-                    cliente_final = st.text_input("Nombre del Nuevo Jugador:").strip()
+            if opcion_cliente == "Existente":
+                cliente_final = st.selectbox("Seleccionar Jugador:", clientes_existentes)
+            else:
+                cliente_final = st.text_input("Nombre del Nuevo Jugador:").strip()
 
-                opciones_tipo = [
-                    "🟢 Saldo agregado (+)",
-                    "🔴 Partida jugada (-)",
-                    "🟡 Partida ganada (+)",
-                    "🔵 Reintegro (+)",
-                    "🟣 Retiro (-)"
-                ]
-                tipo_movimiento = st.selectbox("Tipo de Movimiento:", opciones_tipo)
-                
-                # Monto arranca en 0.0
-                monto = st.number_input("Monto ($):", min_value=0.0, step=1.0, format="%.2f", value=0.0)
+            opciones_tipo = [
+                "🟢 Saldo agregado (+)",
+                "🔴 Partida jugada (-)",
+                "🟡 Partida ganada (+)",
+                "🔵 Reintegro (+)",
+                "🟣 Retiro (-)"
+            ]
+            tipo_movimiento = st.selectbox("Tipo de Movimiento:", opciones_tipo)
+            
+            # Campo de monto vinculado a session_state
+            monto = st.number_input("Monto ($):", min_value=0.0, step=1.0, format="%.2f", key="monto_input")
 
-                fecha_actual = st.date_input("Fecha:", datetime.now().date())
-                
-                col_h1, col_h2, col_ampm = st.columns([1, 1, 1])
-                hora_now = datetime.now()
-                h_12_default = hora_now.hour % 12
-                if h_12_default == 0:
-                    h_12_default = 12
-                ampm_default = "PM" if hora_now.hour >= 12 else "AM"
+            fecha_actual = st.date_input("Fecha:", datetime.now().date())
+            
+            col_h1, col_h2, col_ampm = st.columns([1, 1, 1])
+            hora_now = datetime.now()
+            h_12_default = hora_now.hour % 12
+            if h_12_default == 0:
+                h_12_default = 12
+            ampm_default = "PM" if hora_now.hour >= 12 else "AM"
 
-                hora_num = col_h1.number_input("Hora (1-12):", min_value=1, max_value=12, value=h_12_default, step=1)
-                min_num = col_h2.number_input("Min (0-59):", min_value=0, max_value=59, value=hora_now.minute, step=1)
-                ampm = col_ampm.selectbox("Período:", ["AM", "PM"], index=0 if ampm_default == "AM" else 1)
+            hora_num = col_h1.number_input("Hora (1-12):", min_value=1, max_value=12, value=h_12_default, step=1)
+            min_num = col_h2.number_input("Min (0-59):", min_value=0, max_value=59, value=hora_now.minute, step=1)
+            ampm = col_ampm.selectbox("Período:", ["AM", "PM"], index=0 if ampm_default == "AM" else 1)
 
-                hora_formateada = f"{hora_num:02d}:{min_num:02d} {ampm}"
-                detalle = st.text_input("Observaciones:", placeholder="Mesa 1, Nequi, etc.")
+            hora_formateada = f"{hora_num:02d}:{min_num:02d} {ampm}"
+            detalle = st.text_input("Observaciones:", placeholder="Mesa 1, Nequi, etc.", key="detalle_input")
 
-                submit_registro = st.form_submit_button("💾 GUARDAR TRANSACCIÓN", type="primary")
+            submit_registro = st.button("💾 GUARDAR TRANSACCIÓN", type="primary")
 
             # Lógica que se ejecuta al presionar Guardar
             if submit_registro:
@@ -428,7 +433,7 @@ else:
                 elif monto <= 0:
                     st.warning("⚠️ Debes indicar un monto mayor a $0 para poder guardar la transacción.")
                 
-                # ✅ SI TODO ESTÁ BIEN: Registra y limpia
+                # ✅ SI TODO ESTÁ BIEN: Registra y restablece el monto a 0.0
                 else:
                     with st.spinner("Guardando en Google Sheets..."):
                         guardar_movimiento(
@@ -440,10 +445,12 @@ else:
                             detalle
                         )
                         st.toast(f"✅ Transacción de ${monto:,.2f} guardada con éxito a {cliente_final}", icon="🎉")
+                        
+                        # Restablecer el monto y observaciones en el estado
+                        st.session_state["monto_input"] = 0.0
+                        st.session_state["detalle_input"] = ""
                         time.sleep(0.8)
                     
-                    # st.rerun() recarga la app y, gracias a clear_on_submit=True,
-                    # la casilla del monto volverá a 0.00 automáticamente
                     st.rerun()
 
         st.markdown("### 📊 CONSOLIDADO GENERAL DE SALDOS")
