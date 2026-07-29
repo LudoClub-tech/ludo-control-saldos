@@ -1,300 +1,400 @@
 import streamlit as st
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
+import os
 import random
 import time
-from streamlit_gsheets import GSheetsConnection
 
-# ---------------------------------------------------------
-# 1. CONFIGURACIÓN DE PÁGINA Y ESTILOS (LUDO CLUB)
-# ---------------------------------------------------------
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
-    page_title="Gestión Ludo Club",
+    page_title="Ludo Control Saldos - Gaming Edition",
     page_icon="🎲",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
+# --- ESTILOS CSS PERSONALIZADOS (ESTILO GAMING / GASTOS DIARIOS) ---
 st.markdown("""
 <style>
-    .stApp { background-color: #0D1117; color: #C9D1D9; }
+    .stApp {
+        background-color: #0E1117;
+        color: #F0F6FC;
+        font-family: 'Segoe UI', Roboto, sans-serif;
+    }
+    
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
     
     .gaming-card {
-        background: linear-gradient(145deg, #161B22, #0D1117);
+        background: linear-gradient(135deg, #161B22 0%, #21262D 100%);
         border: 1px solid #30363D;
-        border-radius: 12px;
+        border-radius: 16px;
         padding: 20px;
-        margin-bottom: 15px;
-        box-shadow: 0 8px 16px rgba(0,0,0,0.4);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
         text-align: center;
+        margin-bottom: 15px;
+        transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .gaming-card:hover {
+        border-color: #58A6FF;
+        transform: translateY(-2px);
     }
     
-    .metric-value {
-        font-size: 32px;
-        font-weight: 900;
-        margin-top: 5px;
+    .saldo-card {
+        background: linear-gradient(135deg, #1F293D 0%, #111827 100%);
+        border: 2px solid #38BDF8;
+        box-shadow: 0 0 20px rgba(56, 189, 248, 0.2);
     }
-    
-    .metric-label {
-        color: #8B949E;
-        font-size: 11px;
-        font-weight: 700;
+    .saldo-title {
+        color: #94A3B8;
+        font-size: 14px;
         text-transform: uppercase;
-        letter-spacing: 1px;
-    }
-
-    div.stButton > button:first-child {
-        border-radius: 8px;
+        letter-spacing: 1.5px;
         font-weight: 700;
+        margin-bottom: 5px;
+    }
+    .saldo-amount {
+        color: #38BDF8;
+        font-size: 38px;
+        font-weight: 900;
+        text-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
+    }
+    
+    .stButton>button {
+        width: 100%;
+        border-radius: 14px !important;
+        height: 3.2em !important;
+        font-size: 18px !important;
+        font-weight: 800 !important;
+        letter-spacing: 0.5px;
+        transition: all 0.2s ease-in-out !important;
+        border: none !important;
+    }
+    
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background-color: #161B22;
+        padding: 8px;
+        border-radius: 14px;
+        border: 1px solid #30363D;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        border-radius: 10px;
+        color: #8B949E;
+        font-weight: 700;
+        font-size: 15px;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #238636 !important;
+        color: #FFFFFF !important;
+    }
+    
+    div[data-baseweb="select"] > div, input {
+        background-color: #161B22 !important;
+        border-radius: 10px !important;
+        border-color: #30363D !important;
+        color: #FFFFFF !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------------------------------------------------
-# 2. CONEXIÓN Y FUNCIONES DE GOOGLE SHEETS
-# ---------------------------------------------------------
-conn = st.connection("gsheets", type=GSheetsConnection)
+# --- CONEXIÓN A GOOGLE SHEETS ---
+@st.cache_resource
+def conectar_google_sheets():
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    archivo_json = "service_account.json"
+    
+    if os.path.exists(archivo_json):
+        creds = ServiceAccountCredentials.from_json_keyfile_name(archivo_json, scope)
+    elif len(st.secrets) > 0 and "gcp_service_account" in st.secrets:
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    else:
+        raise FileNotFoundError(f"No se encontró el archivo '{archivo_json}' ni credenciales en Secrets.")
+        
+    client = gspread.authorize(creds)
+    sheet = client.open("Ludo_Control_Saldos").sheet1
+    return sheet
 
-def cargar_datos():
-    try:
-        df = conn.read(ttl="0s")
-        if df.empty:
-            return pd.DataFrame(columns=["Fecha", "Hora", "Cliente", "Tipo", "Monto", "Detalle"])
-        return df
-    except Exception as e:
-        st.error(f"Error al conectar con Google Sheets: {e}")
-        return pd.DataFrame(columns=["Fecha", "Hora", "Cliente", "Tipo", "Monto", "Detalle"])
+try:
+    sheet = conectar_google_sheets()
+except Exception as e:
+    st.error(f"⚠️ Error de conexión con Google Sheets: {e}")
+    st.stop()
+
+# --- FUNCIONES DE APOYO ---
+def obtener_datos():
+    data = sheet.get_all_records()
+    df = pd.DataFrame(data)
+    if df.empty:
+        df = pd.DataFrame(columns=["Fecha", "Hora", "Cliente", "Tipo", "Monto", "Detalle"])
+    else:
+        df["Monto"] = pd.to_numeric(df["Monto"], errors="coerce").fillna(0)
+        df["Fecha"] = df["Fecha"].astype(str)
+    return df
 
 def guardar_movimiento(fecha, hora, cliente, tipo, monto, detalle):
-    df_actual = cargar_datos()
-    nuevo_registro = pd.DataFrame([{
-        "Fecha": fecha,
-        "Hora": hora,
-        "Cliente": cliente,
-        "Tipo": tipo,
-        "Monto": float(monto),
-        "Detalle": detalle
-    }])
-    df_actualizado = pd.concat([df_actual, nuevo_registro], ignore_index=True)
-    conn.update(data=df_actualizado)
-    st.cache_data.clear()
+    sheet.append_row([str(fecha), str(hora), cliente, tipo, float(monto), detalle])
 
 def calcular_neto(row):
-    tipo = str(row["Tipo"])
-    monto = float(row["Monto"])
-    if "(+)" in tipo:
-        return monto
-    elif "(-)" in tipo:
-        return -monto
-    return 0.0
+    t = row["Tipo"]
+    m = row["Monto"]
+    if t in ["🟢 Saldo agregado (+)", "🟡 Partida ganada (+)", "🔵 Reintegro (+)"]:
+        return m
+    elif t in ["🔴 Partida jugada (-)", "🟣 Retiro (-)"]:
+        return -m
+    return 0
 
-df_movimientos = cargar_datos()
+# --- INICIALIZACIÓN DE ESTADO DE SESIÓN (SESSION STATE) ---
+if "ganador_ruleta_hoy" not in st.session_state:
+    st.session_state["ganador_ruleta_hoy"] = None
+# 🛡️ CLAVE DE SEGURIDAD: Bloqueo de envío doble
+if "bloqueo_envio_admin" not in st.session_state:
+    st.session_state["bloqueo_envio_admin"] = False
+
+# Cargar datos
+df_movimientos = obtener_datos()
+clientes_base = ["Dani", "Mis amores", "Wis", "Wilson"]
+clientes_existentes = sorted(list(set(clientes_base + df_movimientos["Cliente"].dropna().unique().tolist())))
 fecha_hoy_str = datetime.now().strftime("%Y-%m-%d")
 
-# ---------------------------------------------------------
-# 3. BARRA LATERAL - SELECCIÓN DE ROL
-# ---------------------------------------------------------
-st.sidebar.markdown("## 🎲 LUDO CLUB")
-rol = st.sidebar.radio("Selecciona tu Rol:", ["🎮 Jugador", "🛠️ Administrador"])
+# --- ENCABEZADO GAMING ---
+st.markdown("""
+    <div style='text-align: center; padding: 10px 0 20px 0;'>
+        <h1 style='font-size: 36px; font-weight: 900; color: #58A6FF; margin: 0;'>🎲 LUDO CONTROL</h1>
+        <p style='color: #8B949E; font-weight: 600; font-size: 14px;'>SISTEMA DE SALDOS & RANKING DE JUGADORES</p>
+    </div>
+""", unsafe_allow_html=True)
 
-clientes_existentes = sorted(df_movimientos["Cliente"].dropna().unique().tolist()) if not df_movimientos.empty else []
+# --- NAVEGACIÓN PRINCIPAL ---
+modo_acceso = st.radio(
+    "",
+    ["👤 MODO JUGADOR", "🔐 MODO ADMINISTRADOR"],
+    horizontal=True,
+    label_visibility="collapsed"
+)
 
-# ---------------------------------------------------------
-# 4. VISTA: JUGADOR (SALDOS, HISTORIAL Y RANKING DE GANADORES)
-# ---------------------------------------------------------
-if rol == "🎮 Jugador":
-    st.markdown("# 🏆 Panel de Ludo Club")
+st.markdown("<br>", unsafe_allow_html=True)
 
-    tabs_jugador = st.tabs(["💰 Mi Saldo e Historial", "🥇 Ranking de Ganadores", "🎡 Ganador Ruleta Hoy"])
+# ==============================================================================
+# MODO 1: CONSULTA PARA JUGADORES (GAMING UI)
+# ==============================================================================
+if modo_acceso == "👤 MODO JUGADOR":
+    # (El Modo Jugador permanece igual, no necesita bloqueo de envío)
+    
+    tab_saldo, tab_ranking, tab_ruleta = st.tabs([
+        "💰 MI SALDO", 
+        "🏆 RANKING Y DESAFÍO", 
+        "🎡 RULETA DIARIA"
+    ])
 
-    # TAB 1: SALDO DE JUGADOR
-    with tabs_jugador[0]:
-        if len(clientes_existentes) == 0:
-            st.info("Aún no hay jugadores registrados.")
-        else:
-            cliente_sel = st.selectbox("Selecciona tu Nombre/Alias:", clientes_existentes)
-            
-            if cliente_sel:
-                df_cli = df_movimientos[df_movimientos["Cliente"] == cliente_sel]
-                
-                saldo = 0.0
-                if not df_cli.empty:
-                    df_cli_calc = df_cli.copy()
-                    df_cli_calc["Neto"] = df_cli_calc.apply(calcular_neto, axis=1)
-                    saldo = df_cli_calc["Neto"].sum()
+    # --- TAB 1: SALDO DE JUGADOR ---
+    with tab_saldo:
+        if not df_movimientos.empty:
+            jugador_seleccionado = st.selectbox(
+                "👇 SELECCIONA TU NOMBRE DE JUGADOR:",
+                ["-- Seleccionar Jugador --"] + clientes_existentes
+            )
 
-                col_s1, col_s2 = st.columns(2)
-                with col_s1:
+            if jugador_seleccionado != "-- Seleccionar Jugador --":
+                df_jugador = df_movimientos[df_movimientos["Cliente"] == jugador_seleccionado].copy()
+
+                if not df_jugador.empty:
+                    df_jugador["Neto"] = df_jugador.apply(calcular_neto, axis=1)
+                    saldo_actual = df_jugador["Neto"].sum()
+
+                    partidas_jugadas_hoy = len(df_jugador[(df_jugador["Fecha"] == fecha_hoy_str) & (df_jugador["Tipo"] == "🔴 Partida jugada (-)")])
+                    partidas_ganadas_hoy = len(df_jugador[(df_jugador["Fecha"] == fecha_hoy_str) & (df_jugador["Tipo"] == "🟡 Partida ganada (+)")])
+
                     st.markdown(f"""
-                        <div class="gaming-card">
-                            <div class="metric-label">Jugador Activo</div>
-                            <div class="metric-value" style="color: #58A6FF;">👤 {cliente_sel}</div>
+                        <div class="gaming-card saldo-card">
+                            <div class="saldo-title">SALDO NETO DISPONIBLE</div>
+                            <div class="saldo-amount">${saldo_actual:,.2f}</div>
+                            <div style="color: #94A3B8; font-size: 13px; margin-top: 5px;">Jugador: <b>{jugador_seleccionado}</b></div>
                         </div>
                     """, unsafe_allow_html=True)
-                with col_s2:
-                    st.markdown(f"""
-                        <div class="gaming-card">
-                            <div class="metric-label">Saldo Disponible</div>
-                            <div class="metric-value" style="color: #3FB950;">${saldo:,.2f}</div>
-                        </div>
-                    """, unsafe_allow_html=True)
 
-                st.markdown("### 📜 Mi Historial de Movimientos")
-                if not df_cli.empty:
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown(f"""
+                            <div class="gaming-card">
+                                <div style="font-size: 24px;">🎮 {partidas_jugadas_hoy} / 3</div>
+                                <div style="color: #8B949E; font-size: 12px; font-weight: 700;">JUGADAS HOY</div>
+                            </div>
+                        """, unsafe_allow_html=True)
+                    with col2:
+                        st.markdown(f"""
+                            <div class="gaming-card">
+                                <div style="font-size: 24px;">🏆 {partidas_ganadas_hoy}</div>
+                                <div style="color: #8B949E; font-size: 12px; font-weight: 700;">VICTORIAS HOY</div>
+                            </div>
+                        """, unsafe_allow_html=True)
+
+                    if partidas_jugadas_hoy >= 3:
+                        st.success("🎉 ¡DESAFÍO COMPLETADO! Estás dentro del sorteo de la ruleta hoy.")
+                    else:
+                        st.info(f"🎯 Juega {3 - partidas_jugadas_hoy} partida(s) más hoy para entrar a la ruleta.")
+
+                    st.markdown("### 📜 HISTORIAL RECIENTE")
+                    df_mostrar = df_jugador[["Fecha", "Hora", "Tipo", "Monto", "Detalle"]].iloc[::-1].reset_index(drop=True)
                     st.dataframe(
-                        df_cli[["Fecha", "Hora", "Tipo", "Monto", "Detalle"]].sort_index(ascending=False).style.format({"Monto": "${:,.2f}"}),
+                        df_mostrar.style.format({"Monto": "${:,.2f}"}),
                         use_container_width=True,
                         hide_index=True
                     )
                 else:
-                    st.info("No tienes movimientos registrados.")
-
-    # TAB 2: RANKING DE GANADORES
-    with tabs_jugador[1]:
-        st.markdown("### 🏆 PODIO DE GANADORES")
-        filtro_ranking = st.radio("Ver victorias de:", ["Hoy", "Histórico"], horizontal=True)
-
-        if not df_movimientos.empty:
-            df_ganadas = df_movimientos[df_movimientos["Tipo"] == "🟡 Partida ganada (+)"]
-
-            if filtro_ranking == "Hoy":
-                df_ganadas = df_ganadas[df_ganadas["Fecha"] == fecha_hoy_str]
-
-            if not df_ganadas.empty:
-                ranking_df = df_ganadas.groupby("Cliente").size().reset_index(name="Victorias")
-                ranking_df = ranking_df.sort_values(by="Victorias", ascending=False).reset_index(drop=True)
-
-                # Medallas para el Top 3
-                iconos = ["🥇", "🥈", "🥉"]
-                ranking_df["Puesto"] = [iconos[i] if i < 3 else f"#{i+1}" for i in range(len(ranking_df))]
-
-                ranking_df = ranking_df[["Puesto", "Cliente", "Victorias"]]
-                st.dataframe(ranking_df, use_container_width=True, hide_index=True)
-            else:
-                st.info("Aún no hay partidas ganadas registradas para esta selección.")
+                    st.info(f"Hola {jugador_seleccionado}, aún no registras movimientos.")
         else:
             st.info("Sin registros en la base de datos.")
 
-    # TAB 3: GANADOR DE LA RULETA DEL DÍA
-    with tabs_jugador[2]:
-        st.markdown("### 🎡 Sorteo del Día")
-        if "ganador_ruleta_hoy" in st.session_state:
-            ganador = st.session_state["ganador_ruleta_hoy"]
-            st.markdown(f"""
-                <div class="gaming-card" style="border-color: #238636; background: linear-gradient(135deg, #1C4429 0%, #111827 100%); padding: 35px;">
-                    <div style="font-size: 16px; color: #3FB950; font-weight: 800;">👑 GANADOR DE LA RULETA DE HOY 👑</div>
-                    <div style="font-size: 42px; font-weight: 900; color: #FFFFFF; text-shadow: 0 0 10px #3FB950;">🎉 {ganador} 🎉</div>
-                </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.info("El administrador aún no ha girado la ruleta del día de hoy.")
+    # --- TAB 2: RANKING ---
+    with tab_ranking:
+        st.markdown("### 🥇 PODIO DE CAMPEONES")
+        filtro_rango = st.radio("Período:", ["Hoy", "Histórico General"], horizontal=True)
 
-# ---------------------------------------------------------
-# 5. VISTA: ADMINISTRADOR (MÉTRICAS + REGISTRO + RULETA)
-# ---------------------------------------------------------
+        if not df_movimientos.empty:
+            if filtro_rango == "Hoy":
+                df_ganadores = df_movimientos[(df_movimientos["Fecha"] == fecha_hoy_str) & (df_movimientos["Tipo"] == "🟡 Partida ganada (+)")]
+            else:
+                df_ganadores = df_movimientos[df_movimientos["Tipo"] == "🟡 Partida ganada (+)"]
+
+            if not df_ganadores.empty:
+                ranking_df = df_ganadores.groupby("Cliente").size().reset_index(name="Victorias")
+                ranking_df = ranking_df.sort_values(by="Victorias", ascending=False).reset_index(drop=True)
+
+                col_p1, col_p2, col_p3 = st.columns(3)
+                
+                if len(ranking_df) >= 1:
+                    col_p1.markdown(f"""
+                        <div class="gaming-card" style="border-color: #FFD700;">
+                            <div style="font-size: 30px;">🥇</div>
+                            <div style="font-weight: 800; font-size: 18px; color: #FFD700;">{ranking_df.iloc[0]['Cliente']}</div>
+                            <div style="color: #8B949E; font-size: 13px;">{ranking_df.iloc[0]['Victorias']} Victorias</div>
+                        </div>
+                    """, unsafe_allow_html=True)
+                if len(ranking_df) >= 2:
+                    col_p2.markdown(f"""
+                        <div class="gaming-card" style="border-color: #C0C0C0;">
+                            <div style="font-size: 30px;">🥈</div>
+                            <div style="font-weight: 800; font-size: 18px; color: #C0C0C0;">{ranking_df.iloc[1]['Cliente']}</div>
+                            <div style="color: #8B949E; font-size: 13px;">{ranking_df.iloc[1]['Victorias']} Victorias</div>
+                        </div>
+                    """, unsafe_allow_html=True)
+                if len(ranking_df) >= 3:
+                    col_p3.markdown(f"""
+                        <div class="gaming-card" style="border-color: #CD7F32;">
+                            <div style="font-size: 30px;">🥉</div>
+                            <div style="font-weight: 800; font-size: 18px; color: #CD7F32;">{ranking_df.iloc[2]['Cliente']}</div>
+                            <div style="color: #8B949E; font-size: 13px;">{ranking_df.iloc[2]['Victorias']} Victorias</div>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+                st.markdown("### 📊 TABLA GENERAL DE LÍDERES")
+                ranking_df.index += 1
+                st.dataframe(ranking_df, use_container_width=True)
+            else:
+                st.info("Sin partidas ganadas en este lapso de tiempo.")
+
+    # --- TAB 3: RULETA DIARIA (VISTA JUGADOR) ---
+    with tab_ruleta:
+        st.markdown("### 🎡 SORTEO DE RULETA DIARIA")
+        st.caption("Entran automáticamente los jugadores que hayan alcanzado 3 o más partidas hoy.")
+
+        if not df_movimientos.empty:
+            df_jugadas_hoy = df_movimientos[(df_movimientos["Fecha"] == fecha_hoy_str) & (df_movimientos["Tipo"] == "🔴 Partida jugada (-)")]
+            conteo = df_jugadas_hoy.groupby("Cliente").size().reset_index(name="Cant")
+            calificados_list = conteo[conteo["Cant"] >= 3]["Cliente"].tolist()
+
+            if len(calificados_list) > 0:
+                st.write(f"👥 **Jugadores Calificados Hoy ({len(calificados_list)}):**")
+                cols_cal = st.columns(len(calificados_list))
+                for idx, nom in enumerate(calificados_list):
+                    cols_cal[idx].markdown(f"<div class='gaming-card' style='padding: 10px; font-weight: bold; color: #238636;'>✅ {nom}</div>", unsafe_allow_html=True)
+
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                if st.session_state["ganador_ruleta_hoy"]:
+                    st.markdown(f"""
+                        <div class="gaming-card" style="border-color: #238636; background: linear-gradient(135deg, #1C4429 0%, #111827 100%); padding: 35px;">
+                            <div style="font-size: 16px; color: #3FB950; font-weight: 800;">🎉 ¡GANADOR OFICIAL DEL SORTEO DE HOY! 🎉</div>
+                            <div style="font-size: 42px; font-weight: 900; color: #FFFFFF; text-shadow: 0 0 10px #3FB950;">👑 {st.session_state['ganador_ruleta_hoy']} 👑</div>
+                        </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.info("⏳ La ruleta aún no ha sido girada el día de hoy. El administrador la girará al final de la jornada.")
+            else:
+                st.warning("⚠️ Aún no hay jugadores calificados con 3 partidas hoy.")
+
+# ==============================================================================
+# MODO 2: ADMINISTRADOR (🔑 CON AUTOLIMPIEZA Y SELECTOR INTERACTIVO)
+# ==============================================================================
 else:
-    st.markdown("# 🔑 ACCESO ADMINISTRADOR")
+    st.markdown("### 🔑 ACCESO ADMINISTRADOR")
     CLAVE_ADMIN = "ludo21010227" 
     
     password = st.text_input("Ingresa la contraseña de gestión:", type="password")
 
     if password == CLAVE_ADMIN:
         st.success("✅ Modo Administrador Activo")
-
-        # Inicialización de estado para limpiar campos
+        
+        # Inicializar clave del monto en session_state para poder limpiarlo dinámicamente
         if "monto_input" not in st.session_state:
             st.session_state["monto_input"] = 0.0
         if "detalle_input" not in st.session_state:
             st.session_state["detalle_input"] = ""
 
-        tabs_admin = st.tabs(["📊 Métricas & Crecimiento", "📝 Registrar Movimiento", "🎡 Control Ruleta", "📑 Consolidado & Historial"])
+        # --- SECCIÓN EXCLUSIVA DE GESTIÓN DE RULETA ---
+        with st.expander("🎡 CONTROL DE RULETA DIARIA (EXCLUSIVO ADMIN)", expanded=True):
+            if not df_movimientos.empty:
+                df_jugadas_hoy = df_movimientos[(df_movimientos["Fecha"] == fecha_hoy_str) & (df_movimientos["Tipo"] == "🔴 Partida jugada (-)")]
+                conteo = df_jugadas_hoy.groupby("Cliente").size().reset_index(name="Cant")
+                calificados_list = conteo[conteo["Cant"] >= 3]["Cliente"].tolist()
 
-        # TAB 1: MÉTRICAS Y CRECIMIENTO
-        with tabs_admin[0]:
-            st.markdown("## 📈 Crecimiento y Actividad de Ludo Club")
+                if len(calificados_list) > 0:
+                    st.write(f"👥 **Participantes Calificados para Girar:** {', '.join(calificados_list)}")
+                    
+                    if st.button("🎡 ¡GIRAR RULETA AHORA!", type="primary"):
+                        placeholder = st.empty()
+                        for i in range(25):
+                            seleccionado_temp = random.choice(calificados_list)
+                            placeholder.markdown(f"""
+                                <div class="gaming-card" style="border-color: #A371F7; padding: 30px;">
+                                    <div style="font-size: 14px; color: #A371F7; font-weight: 800;">GIRANDO RULETA EN VIVO...</div>
+                                    <div style="font-size: 38px; font-weight: 900; color: #FFFFFF;">🔄 {seleccionado_temp} 🔄</div>
+                                </div>
+                            """, unsafe_allow_html=True)
+                            time.sleep(0.08 + (i * 0.01))
+                        
+                        ganador_final = random.choice(calificados_list)
+                        st.session_state["ganador_ruleta_hoy"] = ganador_final
+                        
+                        placeholder.markdown(f"""
+                            <div class="gaming-card" style="border-color: #238636; background: linear-gradient(135deg, #1C4429 0%, #111827 100%); padding: 35px;">
+                                <div style="font-size: 16px; color: #3FB950; font-weight: 800;">🎉 ¡GANADOR DEL PREMIO EXTRA! 🎉</div>
+                                <div style="font-size: 42px; font-weight: 900; color: #FFFFFF; text-shadow: 0 0 10px #3FB950;">👑 {ganador_final} 👑</div>
+                            </div>
+                        """, unsafe_allow_html=True)
+                        st.balloons()
+                else:
+                    st.info("⚠️ Aún no hay jugadores calificados para girar la ruleta hoy.")
+        
+        # --- REGISTRO DE MOVIMIENTOS ---
+        with st.expander("➕ REGISTRAR NUEVO MOVIMIENTO", expanded=True):
             
-            if df_movimientos.empty:
-                st.info("Aún no hay datos para calcular estadísticas.")
-            else:
-                df_calc = df_movimientos.copy()
-                df_calc["Fecha_dt"] = pd.to_datetime(df_calc["Fecha"], errors="coerce")
-                
-                hoy_dt = datetime.now().date()
-                hace_7_dias = hoy_dt - timedelta(days=7)
-                mes_actual = hoy_dt.month
-                ano_actual = hoy_dt.year
-
-                jugadores_hoy = df_calc[df_calc["Fecha_dt"].dt.date == hoy_dt]["Cliente"].nunique()
-                total_jugadores = df_calc["Cliente"].nunique()
-
-                # Cada 4 registros de "Partida jugada (-)" = 1 partida de Ludo
-                df_partidas = df_calc[df_calc["Tipo"] == "🔴 Partida jugada (-)"]
-
-                reg_hoy = len(df_partidas[df_partidas["Fecha_dt"].dt.date == hoy_dt])
-                partidas_hoy = reg_hoy // 4
-
-                reg_semana = len(df_partidas[df_partidas["Fecha_dt"].dt.date >= hace_7_dias])
-                partidas_semana = reg_semana // 4
-
-                reg_mes = len(df_partidas[(df_partidas["Fecha_dt"].dt.month == mes_actual) & (df_partidas["Fecha_dt"].dt.year == ano_actual)])
-                partidas_mes = reg_mes // 4
-
-                c1, c2, c3, c4 = st.columns(4)
-                with c1:
-                    st.markdown(f"""
-                        <div class="gaming-card">
-                            <div class="metric-label">Jugadores Activos Hoy</div>
-                            <div class="metric-value" style="color: #58A6FF;">👥 {jugadores_hoy}</div>
-                            <div style="font-size: 11px; color: #8B949E;">De {total_jugadores} registrados</div>
-                        </div>
-                    """, unsafe_allow_html=True)
-
-                with c2:
-                    st.markdown(f"""
-                        <div class="gaming-card">
-                            <div class="metric-label">Partidas Hoy</div>
-                            <div class="metric-value" style="color: #3FB950;">🎲 {partidas_hoy}</div>
-                            <div style="font-size: 11px; color: #8B949E;">{reg_hoy} jugadas de 4 entradas</div>
-                        </div>
-                    """, unsafe_allow_html=True)
-
-                with c3:
-                    st.markdown(f"""
-                        <div class="gaming-card">
-                            <div class="metric-label">Partidas (7 Días)</div>
-                            <div class="metric-value" style="color: #D29922;">📅 {partidas_semana}</div>
-                            <div style="font-size: 11px; color: #8B949E;">{reg_semana} jugadas tot.</div>
-                        </div>
-                    """, unsafe_allow_html=True)
-
-                with c4:
-                    st.markdown(f"""
-                        <div class="gaming-card">
-                            <div class="metric-label">Partidas (Mes)</div>
-                            <div class="metric-value" style="color: #A371F7;">🏆 {partidas_mes}</div>
-                            <div style="font-size: 11px; color: #8B949E;">Mes actual</div>
-                        </div>
-                    """, unsafe_allow_html=True)
-
-                st.markdown("---")
-                st.markdown("### 📊 Partidas Completadas por Día (Últimos 7 Días)")
-                df_partidas_semana = df_partidas[df_partidas["Fecha_dt"].dt.date >= hace_7_dias]
-                
-                if not df_partidas_semana.empty:
-                    conteo_diario = df_partidas_semana.groupby("Fecha").size().reset_index(name="Jugadas")
-                    conteo_diario["Partidas Completas"] = conteo_diario["Jugadas"] // 4
-                    st.bar_chart(data=conteo_diario, x="Fecha", y="Partidas Completas", color="#3FB950")
-
-        # TAB 2: REGISTRAR MOVIMIENTO (NUEVO / EXISTENTE INTERACTIVO)
-        with tabs_admin[1]:
-            st.markdown("### ➕ Registrar Nuevo Movimiento")
-            
+            # 1. Selector interactivo fuera de st.form para alternar entre Existente y Nuevo en tiempo real
             opcion_cliente = st.radio("Cliente:", ["Existente", "➕ Nuevo"], horizontal=True)
 
             if opcion_cliente == "Existente":
                 cliente_final = st.selectbox("Seleccionar Jugador:", clientes_existentes)
             else:
-                cliente_final = st.text_input("Nombre del Nuevo Jugador:").strip().title()
+                cliente_final = st.text_input("Nombre del Nuevo Jugador:").strip()
 
             opciones_tipo = [
                 "🟢 Saldo agregado (+)",
@@ -305,7 +405,9 @@ else:
             ]
             tipo_movimiento = st.selectbox("Tipo de Movimiento:", opciones_tipo)
             
+            # Campo de monto vinculado a session_state
             monto = st.number_input("Monto ($):", min_value=0.0, step=1.0, format="%.2f", key="monto_input")
+
             fecha_actual = st.date_input("Fecha:", datetime.now().date())
             
             col_h1, col_h2, col_ampm = st.columns([1, 1, 1])
@@ -324,11 +426,17 @@ else:
 
             submit_registro = st.button("💾 GUARDAR TRANSACCIÓN", type="primary")
 
+            # Lógica que se ejecuta al presionar Guardar
             if submit_registro:
+                # 🛑 VALIDACIÓN 1: El usuario no escribió ningún cliente
                 if not cliente_final:
                     st.error("❌ Debes indicar el nombre del jugador.")
+                
+                # 🛑 VALIDACIÓN 2: El monto es 0 o no ingresó nada
                 elif monto <= 0:
                     st.warning("⚠️ Debes indicar un monto mayor a $0 para poder guardar la transacción.")
+                
+                # ✅ SI TODO ESTÁ BIEN: Registra y restablece el monto a 0.0
                 else:
                     with st.spinner("Guardando en Google Sheets..."):
                         guardar_movimiento(
@@ -339,77 +447,36 @@ else:
                             monto,
                             detalle
                         )
-                        st.toast(f"✅ Transacción guardada con éxito para {cliente_final}", icon="🎉")
+                        st.toast(f"✅ Transacción de ${monto:,.2f} guardada con éxito a {cliente_final}", icon="🎉")
+                        
+                        # Restablecer el monto y observaciones en el estado
                         st.session_state["monto_input"] = 0.0
                         st.session_state["detalle_input"] = ""
                         time.sleep(0.8)
+                    
                     st.rerun()
 
-        # TAB 3: RULETA DIARIA DE PREMIOS (EXCLUSIVO ADMIN)
-        with tabs_admin[2]:
-            st.markdown("### 🎡 Control de Ruleta Diaria")
-            if not df_movimientos.empty:
-                df_jugadas_hoy = df_movimientos[(df_movimientos["Fecha"] == fecha_hoy_str) & (df_movimientos["Tipo"] == "🔴 Partida jugada (-)")]
-                conteo = df_jugadas_hoy.groupby("Cliente").size().reset_index(name="Cant")
-                calificados_list = conteo[conteo["Cant"] >= 3]["Cliente"].tolist()
+        st.markdown("### 📊 CONSOLIDADO GENERAL DE SALDOS")
+        if not df_movimientos.empty:
+            df_calc = df_movimientos.copy()
+            df_calc["Neto"] = df_calc.apply(calcular_neto, axis=1)
 
-                if len(calificados_list) > 0:
-                    st.write(f"👥 **Participantes Calificados para Girar Today (≥3 jugadas):** {', '.join(calificados_list)}")
-                    
-                    if st.button("🎡 ¡GIRAR RULETA AHORA!", type="primary"):
-                        placeholder = st.empty()
-                        for i in range(25):
-                            seleccionado_temp = random.choice(calificados_list)
-                            placeholder.markdown(f"""
-                                <div class="gaming-card" style="border-color: #A371F7; padding: 30px;">
-                                    <div style="font-size: 14px; color: #A371F7; font-weight: 800;">GIRANDO RULETA EN VIVO...</div>
-                                    <div style="font-size: 38px; font-weight: 900; color: #FFFFFF;">🔄 {seleccionado_temp} 🔄</div>
-                                </div>
-                            """, unsafe_allow_html=True)
-                            time.sleep(0.08 + (i * 0.01))
-                        
-                        ganador_final = random.choice(calificados_list)
-                        st.session_state["ganador_ruleta_hoy"] = ganador_final
-                        
-                        # Guardar ganador en la base de datos
-                        hora_actual_str = datetime.now().strftime("%I:%M %p")
-                        guardar_movimiento(fecha_hoy_str, hora_actual_str, ganador_final, "🟡 Partida ganada (+)", 0.0, "🎉 GANADOR RULETA DIARIA")
-                        
-                        placeholder.markdown(f"""
-                            <div class="gaming-card" style="border-color: #238636; background: linear-gradient(135deg, #1C4429 0%, #111827 100%); padding: 35px;">
-                                <div style="font-size: 16px; color: #3FB950; font-weight: 800;">🎉 ¡GANADOR DEL PREMIO EXTRA! 🎉</div>
-                                <div style="font-size: 42px; font-weight: 900; color: #FFFFFF;">👑 {ganador_final} 👑</div>
-                            </div>
-                        """, unsafe_allow_html=True)
-                        st.balloons()
-                        st.toast(f"✅ Ganador registrado en Google Sheets", icon="💾")
-                else:
-                    st.info("⚠️ Aún no hay jugadores calificados para girar la ruleta hoy (requiere 3 o más partidas jugadas).")
+            saldos_df = df_calc.groupby("Cliente")["Neto"].sum().reset_index()
+            saldos_df.rename(columns={"Neto": "Saldo Actual ($)"}, inplace=True)
+            saldos_df = saldos_df.sort_values(by="Saldo Actual ($)", ascending=False)
 
-        # TAB 4: CONSOLIDADO DE SALDOS E HISTORIAL COMPLETO
-        with tabs_admin[3]:
-            st.markdown("### 📊 CONSOLIDADO GENERAL DE SALDOS")
-            if not df_movimientos.empty:
-                df_calc_saldos = df_movimientos.copy()
-                df_calc_saldos["Neto"] = df_calc_saldos.apply(calcular_neto, axis=1)
+            st.dataframe(
+                saldos_df.style.format({"Saldo Actual ($)": "${:,.2f}"}),
+                use_container_width=True,
+                hide_index=True
+            )
 
-                saldos_df = df_calc_saldos.groupby("Cliente")["Neto"].sum().reset_index()
-                saldos_df.rename(columns={"Neto": "Saldo Actual ($)"}, inplace=True)
-                saldos_df = saldos_df.sort_values(by="Saldo Actual ($)", ascending=False)
-
-                st.dataframe(
-                    saldos_df.style.format({"Saldo Actual ($)": "${:,.2f}"}),
-                    use_container_width=True,
-                    hide_index=True
-                )
-
-            st.markdown("### 📜 HISTORIAL COMPLETO DE REGISTROS")
-            if not df_movimientos.empty:
-                st.dataframe(
-                    df_movimientos.iloc[::-1].reset_index(drop=True).style.format({"Monto": "${:,.2f}"}),
-                    use_container_width=True,
-                    hide_index=True
-                )
-
+        st.markdown("### 📜 HISTORIAL COMPLETO DE REGISTROS")
+        if not df_movimientos.empty:
+            st.dataframe(
+                df_movimientos.iloc[::-1].reset_index(drop=True).style.format({"Monto": "${:,.2f}"}),
+                use_container_width=True,
+                hide_index=True
+            )
     elif password != "":
         st.error("🔒 Contraseña incorrecta.")
