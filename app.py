@@ -160,9 +160,6 @@ def calcular_neto(row):
 # --- INICIALIZACIÓN DE ESTADO DE SESIÓN (SESSION STATE) ---
 if "ganador_ruleta_hoy" not in st.session_state:
     st.session_state["ganador_ruleta_hoy"] = None
-# 🛡️ CLAVE DE SEGURIDAD: Bloqueo de envío doble
-if "bloqueo_envio_admin" not in st.session_state:
-    st.session_state["bloqueo_envio_admin"] = False
 
 # Cargar datos
 df_movimientos = obtener_datos()
@@ -337,7 +334,7 @@ if modo_acceso == "👤 MODO JUGADOR":
                 st.warning("⚠️ Aún no hay jugadores calificados con 3 partidas hoy.")
 
 # ==============================================================================
-# MODO 2: ADMINISTRADOR (🔑 CON AUTOLIMPIEZA Y SELECTOR INTERACTIVO)
+# MODO 2: ADMINISTRADOR
 # ==============================================================================
 else:
     st.markdown("### 🔑 ACCESO ADMINISTRADOR")
@@ -348,7 +345,7 @@ else:
     if password == CLAVE_ADMIN:
         st.success("✅ Modo Administrador Activo")
         
-        # Inicializar clave del monto en session_state para poder limpiarlo dinámicamente
+        # Inicializar clave del monto y observaciones en session_state para limpiarlos dinámicamente
         if "monto_input" not in st.session_state:
             st.session_state["monto_input"] = 0.0
         if "detalle_input" not in st.session_state:
@@ -392,7 +389,7 @@ else:
         # --- REGISTRO DE MOVIMIENTOS ---
         with st.expander("➕ REGISTRAR NUEVO MOVIMIENTO", expanded=True):
             
-            # 1. Selector interactivo fuera de st.form para alternar entre Existente y Nuevo en tiempo real
+            # Selector interactivo de cliente
             opcion_cliente = st.radio("Cliente:", ["Existente", "➕ Nuevo"], horizontal=True, key="reg_opcion_cliente")
 
             if opcion_cliente == "Existente":
@@ -409,7 +406,7 @@ else:
             ]
             tipo_movimiento = st.selectbox("Tipo de Movimiento:", opciones_tipo, key="reg_tipo_mov")
             
-            # Campo de monto vinculado a session_state
+            # Campo de monto conectado al session_state
             monto = st.number_input("Monto ($):", min_value=0.0, step=1.0, format="%.2f", key="monto_input")
 
             fecha_actual = st.date_input("Fecha:", datetime.now().date(), key="reg_fecha")
@@ -430,17 +427,16 @@ else:
 
             submit_registro = st.button("💾 GUARDAR TRANSACCIÓN", type="primary")
 
-            # Lógica que se ejecuta al presionar Guardar
             if submit_registro:
                 # 🛑 VALIDACIÓN 1: El usuario no escribió ningún cliente
                 if not cliente_final:
                     st.error("❌ Debes indicar el nombre del jugador.")
                 
-                # 🛑 VALIDACIÓN 2: El monto es 0 o no ingresó nada
+                # 🛑 VALIDACIÓN 2: El monto es 0 o presiono clic repetido tras reiniciar el campo
                 elif monto <= 0:
                     st.warning("⚠️ Debes indicar un monto mayor a $0 para poder guardar la transacción.")
                 
-                # ✅ SI TODO ESTÁ BIEN: Registra y restablece el monto a 0.0
+                # ✅ SI TODO ESTÁ BIEN: Registra y pon en 0 el saldo inmediatamente
                 else:
                     with st.spinner("Guardando en Google Sheets..."):
                         guardar_movimiento(
@@ -453,12 +449,12 @@ else:
                         )
                         st.toast(f"✅ Transacción de ${monto:,.2f} guardada con éxito a {cliente_final}", icon="🎉")
 
-                        # Restablecer el monto y observaciones en el estado
+                        # 🎯 PROTECCIÓN CONTRA DOBLE CLIC:
+                        # Colocamos el monto a 0.0 de inmediato para que un segundo clic active la alerta en lugar de guardar otra fila
                         st.session_state["monto_input"] = 0.0
                         st.session_state["detalle_input"] = ""
-                        time.sleep(0.8)
-                    
-                    st.rerun()
+                        time.sleep(0.5)
+                        st.rerun()
 
         # --- MÓDULO DE EDICIÓN DE MOVIMIENTOS ---
         with st.expander("✏️ EDITAR O CORREGIR MOVIMIENTO", expanded=False):
