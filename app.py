@@ -9,7 +9,7 @@ import time
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
-    page_title="Ludo Control Saldos - Gaming Edition",
+    page_title="Ludo Control Saldos",
     page_icon="🎲",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -160,6 +160,9 @@ def calcular_neto(row):
 # --- INICIALIZACIÓN DE ESTADO DE SESIÓN (SESSION STATE) ---
 if "ganador_ruleta_hoy" not in st.session_state:
     st.session_state["ganador_ruleta_hoy"] = None
+# 🛡️ CLAVE DE SEGURIDAD: Bloqueo de envío doble
+if "bloqueo_envio_admin" not in st.session_state:
+    st.session_state["bloqueo_envio_admin"] = False
 
 # Cargar datos
 df_movimientos = obtener_datos()
@@ -334,7 +337,7 @@ if modo_acceso == "👤 MODO JUGADOR":
                 st.warning("⚠️ Aún no hay jugadores calificados con 3 partidas hoy.")
 
 # ==============================================================================
-# MODO 2: ADMINISTRADOR
+# MODO 2: ADMINISTRADOR (🔑 CON AUTOLIMPIEZA Y SELECTOR INTERACTIVO)
 # ==============================================================================
 else:
     st.markdown("### 🔑 ACCESO ADMINISTRADOR")
@@ -345,7 +348,7 @@ else:
     if password == CLAVE_ADMIN:
         st.success("✅ Modo Administrador Activo")
         
-        # Inicializar clave del monto y observaciones en session_state para limpiarlos dinámicamente
+        # Inicializar clave del monto en session_state para poder limpiarlo dinámicamente
         if "monto_input" not in st.session_state:
             st.session_state["monto_input"] = 0.0
         if "detalle_input" not in st.session_state:
@@ -389,7 +392,7 @@ else:
         # --- REGISTRO DE MOVIMIENTOS ---
         with st.expander("➕ REGISTRAR NUEVO MOVIMIENTO", expanded=True):
             
-            # Selector interactivo de cliente
+            # 1. Selector interactivo fuera de st.form para alternar entre Existente y Nuevo en tiempo real
             opcion_cliente = st.radio("Cliente:", ["Existente", "➕ Nuevo"], horizontal=True, key="reg_opcion_cliente")
 
             if opcion_cliente == "Existente":
@@ -406,7 +409,7 @@ else:
             ]
             tipo_movimiento = st.selectbox("Tipo de Movimiento:", opciones_tipo, key="reg_tipo_mov")
             
-            # Campo de monto conectado al session_state
+            # Campo de monto vinculado a session_state
             monto = st.number_input("Monto ($):", min_value=0.0, step=1.0, format="%.2f", key="monto_input")
 
             fecha_actual = st.date_input("Fecha:", datetime.now().date(), key="reg_fecha")
@@ -425,18 +428,25 @@ else:
             hora_formateada = f"{hora_num:02d}:{min_num:02d} {ampm}"
             detalle = st.text_input("Observaciones:", placeholder="Mesa 1, Nequi, etc.", key="detalle_input")
 
+            # ============================================================
+            # BOTÓN DE GUARDAR CON PROTECCIÓN SIMPLE
+            # ============================================================
             submit_registro = st.button("💾 GUARDAR TRANSACCIÓN", type="primary")
 
+            # Lógica que se ejecuta al presionar Guardar
             if submit_registro:
-                # 🛑 VALIDACIÓN 1: El usuario no escribió ningún cliente
+                # 🛡️ VALIDACIÓN 1: El usuario no escribió ningún cliente
                 if not cliente_final:
                     st.error("❌ Debes indicar el nombre del jugador.")
                 
-                # 🛑 VALIDACIÓN 2: El monto es 0 o presiono clic repetido tras reiniciar el campo
+                # 🛡️ VALIDACIÓN 2: El monto es 0 o no ingresó nada
                 elif monto <= 0:
                     st.warning("⚠️ Debes indicar un monto mayor a $0 para poder guardar la transacción.")
+                    # 🎯 RESETEO DEL MONTO A 0
+                    st.session_state["monto_input"] = 0.0
+                    st.rerun()
                 
-                # ✅ SI TODO ESTÁ BIEN: Registra y pon en 0 el saldo inmediatamente
+                # ✅ SI TODO ESTÁ BIEN: Registra y restablece el monto a 0.0
                 else:
                     with st.spinner("Guardando en Google Sheets..."):
                         guardar_movimiento(
@@ -449,12 +459,12 @@ else:
                         )
                         st.toast(f"✅ Transacción de ${monto:,.2f} guardada con éxito a {cliente_final}", icon="🎉")
 
-                        # 🎯 PROTECCIÓN CONTRA DOBLE CLIC:
-                        # Colocamos el monto a 0.0 de inmediato para que un segundo clic active la alerta en lugar de guardar otra fila
+                        # Restablecer el monto y observaciones en el estado
                         st.session_state["monto_input"] = 0.0
                         st.session_state["detalle_input"] = ""
-                        time.sleep(0.5)
-                        st.rerun()
+                        time.sleep(0.8)
+                    
+                    st.rerun()
 
         # --- MÓDULO DE EDICIÓN DE MOVIMIENTOS ---
         with st.expander("✏️ EDITAR O CORREGIR MOVIMIENTO", expanded=False):
