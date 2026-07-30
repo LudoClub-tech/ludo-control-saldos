@@ -158,12 +158,11 @@ def calcular_neto(row):
     return 0
 
 # --- INICIALIZACIÓN DE ESTADO DE SESIÓN (SESSION STATE) ---
+# TODAS las variables de session_state deben inicializarse AQUÍ, al principio
 if "ganador_ruleta_hoy" not in st.session_state:
     st.session_state["ganador_ruleta_hoy"] = None
-# 🛡️ CLAVE DE SEGURIDAD: Bloqueo de envío doble
 if "bloqueo_envio_admin" not in st.session_state:
     st.session_state["bloqueo_envio_admin"] = False
-# ✅ INICIALIZAR VARIABLES DEL FORMULARIO AQUÍ (FUERA DE CUALQUIER CONDICIÓN)
 if "monto_input" not in st.session_state:
     st.session_state["monto_input"] = 0.0
 if "detalle_input" not in st.session_state:
