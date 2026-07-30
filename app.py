@@ -163,6 +163,11 @@ if "ganador_ruleta_hoy" not in st.session_state:
 # 🛡️ CLAVE DE SEGURIDAD: Bloqueo de envío doble
 if "bloqueo_envio_admin" not in st.session_state:
     st.session_state["bloqueo_envio_admin"] = False
+# ✅ INICIALIZAR VARIABLES DEL FORMULARIO AQUÍ (FUERA DE CUALQUIER CONDICIÓN)
+if "monto_input" not in st.session_state:
+    st.session_state["monto_input"] = 0.0
+if "detalle_input" not in st.session_state:
+    st.session_state["detalle_input"] = ""
 
 # Cargar datos
 df_movimientos = obtener_datos()
@@ -347,12 +352,6 @@ else:
 
     if password == CLAVE_ADMIN:
         st.success("✅ Modo Administrador Activo")
-        
-        # Inicializar clave del monto en session_state para poder limpiarlo dinámicamente
-        if "monto_input" not in st.session_state:
-            st.session_state["monto_input"] = 0.0
-        if "detalle_input" not in st.session_state:
-            st.session_state["detalle_input"] = ""
 
         # --- SECCIÓN EXCLUSIVA DE GESTIÓN DE RULETA ---
         with st.expander("🎡 CONTROL DE RULETA DIARIA (EXCLUSIVO ADMIN)", expanded=True):
@@ -429,7 +428,7 @@ else:
             detalle = st.text_input("Observaciones:", placeholder="Mesa 1, Nequi, etc.", key="detalle_input")
 
             # ============================================================
-            # BOTÓN DE GUARDAR CON PROTECCIÓN SIMPLE
+            # BOTÓN DE GUARDAR CON PROTECCIÓN
             # ============================================================
             submit_registro = st.button("💾 GUARDAR TRANSACCIÓN", type="primary")
 
