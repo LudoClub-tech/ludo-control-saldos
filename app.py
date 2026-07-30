@@ -143,6 +143,11 @@ def obtener_datos():
 def guardar_movimiento(fecha, hora, cliente, tipo, monto, detalle):
     sheet.append_row([str(fecha), str(hora), cliente, tipo, float(monto), detalle])
 
+def actualizar_movimiento(fila_sheets, fecha, hora, cliente, tipo, monto, detalle):
+    rango = f"A{fila_sheets}:F{fila_sheets}"
+    valores = [[str(fecha), str(hora), cliente, tipo, float(monto), detalle]]
+    sheet.update(rango, valores)
+
 def calcular_neto(row):
     t = row["Tipo"]
     m = row["Monto"]
@@ -187,7 +192,6 @@ st.markdown("<br>", unsafe_allow_html=True)
 # MODO 1: CONSULTA PARA JUGADORES (GAMING UI)
 # ==============================================================================
 if modo_acceso == "👤 MODO JUGADOR":
-    # (El Modo Jugador permanece igual, no necesita bloqueo de envío)
     
     tab_saldo, tab_ranking, tab_ruleta = st.tabs([
         "💰 MI SALDO", 
@@ -389,12 +393,12 @@ else:
         with st.expander("➕ REGISTRAR NUEVO MOVIMIENTO", expanded=True):
             
             # 1. Selector interactivo fuera de st.form para alternar entre Existente y Nuevo en tiempo real
-            opcion_cliente = st.radio("Cliente:", ["Existente", "➕ Nuevo"], horizontal=True)
+            opcion_cliente = st.radio("Cliente:", ["Existente", "➕ Nuevo"], horizontal=True, key="reg_opcion_cliente")
 
             if opcion_cliente == "Existente":
-                cliente_final = st.selectbox("Seleccionar Jugador:", clientes_existentes)
+                cliente_final = st.selectbox("Seleccionar Jugador:", clientes_existentes, key="reg_cliente_existente")
             else:
-                cliente_final = st.text_input("Nombre del Nuevo Jugador:").strip()
+                cliente_final = st.text_input("Nombre del Nuevo Jugador:", key="reg_cliente_nuevo").strip()
 
             opciones_tipo = [
                 "🟢 Saldo agregado (+)",
@@ -403,12 +407,12 @@ else:
                 "🔵 Reintegro (+)",
                 "🟣 Retiro (-)"
             ]
-            tipo_movimiento = st.selectbox("Tipo de Movimiento:", opciones_tipo)
+            tipo_movimiento = st.selectbox("Tipo de Movimiento:", opciones_tipo, key="reg_tipo_mov")
             
             # Campo de monto vinculado a session_state
             monto = st.number_input("Monto ($):", min_value=0.0, step=1.0, format="%.2f", key="monto_input")
 
-            fecha_actual = st.date_input("Fecha:", datetime.now().date())
+            fecha_actual = st.date_input("Fecha:", datetime.now().date(), key="reg_fecha")
             
             col_h1, col_h2, col_ampm = st.columns([1, 1, 1])
             hora_now = datetime.now()
@@ -417,9 +421,9 @@ else:
                 h_12_default = 12
             ampm_default = "PM" if hora_now.hour >= 12 else "AM"
 
-            hora_num = col_h1.number_input("Hora (1-12):", min_value=1, max_value=12, value=h_12_default, step=1)
-            min_num = col_h2.number_input("Min (0-59):", min_value=0, max_value=59, value=hora_now.minute, step=1)
-            ampm = col_ampm.selectbox("Período:", ["AM", "PM"], index=0 if ampm_default == "AM" else 1)
+            hora_num = col_h1.number_input("Hora (1-12):", min_value=1, max_value=12, value=h_12_default, step=1, key="reg_hora_num")
+            min_num = col_h2.number_input("Min (0-59):", min_value=0, max_value=59, value=hora_now.minute, step=1, key="reg_min_num")
+            ampm = col_ampm.selectbox("Período:", ["AM", "PM"], index=0 if ampm_default == "AM" else 1, key="reg_ampm")
 
             hora_formateada = f"{hora_num:02d}:{min_num:02d} {ampm}"
             detalle = st.text_input("Observaciones:", placeholder="Mesa 1, Nequi, etc.", key="detalle_input")
@@ -448,13 +452,96 @@ else:
                             detalle
                         )
                         st.toast(f"✅ Transacción de ${monto:,.2f} guardada con éxito a {cliente_final}", icon="🎉")
-                        
+
                         # Restablecer el monto y observaciones en el estado
                         st.session_state["monto_input"] = 0.0
                         st.session_state["detalle_input"] = ""
                         time.sleep(0.8)
                     
                     st.rerun()
+
+        # --- MÓDULO DE EDICIÓN DE MOVIMIENTOS ---
+        with st.expander("✏️ EDITAR O CORREGIR MOVIMIENTO", expanded=False):
+            if not df_movimientos.empty:
+                df_edit = df_movimientos.copy()
+                
+                opciones_edicion = []
+                for idx, row in df_edit.iterrows():
+                    fila_real = idx + 2
+                    label = f"Fila {fila_real} | {row['Fecha']} {row['Hora']} | {row['Cliente']} | {row['Tipo']} | ${row['Monto']:,.2f}"
+                    opciones_edicion.append(label)
+                
+                opciones_edicion.reverse()
+                
+                movimiento_sel = st.selectbox("Selecciona el movimiento a corregir:", opciones_edicion, key="edit_selector")
+                
+                if movimiento_sel:
+                    fila_sheets_sel = int(movimiento_sel.split(" | ")[0].replace("Fila ", ""))
+                    idx_df = fila_sheets_sel - 2
+                    registro_actual = df_edit.loc[idx_df]
+
+                    col_e1, col_e2 = st.columns(2)
+                    
+                    with col_e1:
+                        edit_cliente = st.text_input("Cliente:", value=str(registro_actual["Cliente"]), key="edit_cli")
+                        
+                        opciones_tipo_edit = [
+                            "🟢 Saldo agregado (+)",
+                            "🔴 Partida jugada (-)",
+                            "🟡 Partida ganada (+)",
+                            "🔵 Reintegro (+)",
+                            "🟣 Retiro (-)"
+                        ]
+                        tipo_index = opciones_tipo_edit.index(registro_actual["Tipo"]) if registro_actual["Tipo"] in opciones_tipo_edit else 0
+                        edit_tipo = st.selectbox("Tipo de Movimiento:", opciones_tipo_edit, index=tipo_index, key="edit_tipo")
+                        edit_monto = st.number_input("Monto ($):", min_value=0.0, value=float(registro_actual["Monto"]), step=1.0, format="%.2f", key="edit_monto")
+
+                    with col_e2:
+                        try:
+                            fecha_previa = datetime.strptime(str(registro_actual["Fecha"]), "%Y-%m-%d").date()
+                        except Exception:
+                            fecha_previa = datetime.now().date()
+                            
+                        edit_fecha = st.date_input("Fecha:", value=fecha_previa, key="edit_fecha")
+                        
+                        hora_str = str(registro_actual["Hora"])
+                        try:
+                            time_obj = datetime.strptime(hora_str, "%I:%M %p")
+                            h_12_val = time_obj.hour % 12
+                            if h_12_val == 0:
+                                h_12_val = 12
+                            m_val = time_obj.minute
+                            ampm_val = "PM" if time_obj.hour >= 12 else "AM"
+                        except Exception:
+                            h_12_val, m_val, ampm_val = 12, 0, "AM"
+
+                        col_eh1, col_eh2, col_eampm = st.columns([1, 1, 1])
+                        edit_h = col_eh1.number_input("Hora (1-12):", min_value=1, max_value=12, value=h_12_val, key="edit_h")
+                        edit_m = col_eh2.number_input("Min (0-59):", min_value=0, max_value=59, value=m_val, key="edit_m")
+                        edit_ampm = col_eampm.selectbox("Período:", ["AM", "PM"], index=0 if ampm_val == "AM" else 1, key="edit_ampm")
+                        
+                        edit_hora_formateada = f"{edit_h:02d}:{edit_m:02d} {edit_ampm}"
+                        edit_detalle = st.text_input("Observaciones:", value=str(registro_actual["Detalle"]), key="edit_det")
+
+                    if st.button("💾 ACTUALIZAR MOVIMIENTO", type="primary"):
+                        if not edit_cliente:
+                            st.error("❌ El nombre del cliente no puede estar vacío.")
+                        else:
+                            with st.spinner("Actualizando registro en Google Sheets..."):
+                                actualizar_movimiento(
+                                    fila_sheets_sel,
+                                    edit_fecha.strftime("%Y-%m-%d"),
+                                    edit_hora_formateada,
+                                    edit_cliente,
+                                    edit_tipo,
+                                    edit_monto,
+                                    edit_detalle
+                                )
+                                st.toast(f"✅ Movimiento de la fila {fila_sheets_sel} actualizado correctamente.", icon="🎉")
+                                time.sleep(0.8)
+                                st.rerun()
+            else:
+                st.info("No hay registros disponibles para editar.")
 
         st.markdown("### 📊 CONSOLIDADO GENERAL DE SALDOS")
         if not df_movimientos.empty:
