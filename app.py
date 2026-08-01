@@ -686,32 +686,33 @@ else:
                 st.warning("⚠️ Aún no hay jugadores con 3 partidas hoy.")
                 st.info("📌 Los jugadores aparecerán aquí cuando completen 3 partidas jugadas.")
         
-        # --- REGISTRO DE MOVIMIENTOS ---
+               # --- REGISTRO DE MOVIMIENTOS ---
         with st.expander("➕ REGISTRAR NUEVO MOVIMIENTO", expanded=True):
             
             with st.form(key="registro_movimiento_form"):
                 
                 st.markdown("### 📝 DATOS DE LA TRANSACCIÓN")
                 
-               opcion_cliente = st.radio(
-    "Cliente:", 
-    ["Existente", "➕ Nuevo"], 
-    horizontal=True, 
-    key="reg_opcion_cliente_form"
-)
+                opcion_cliente = st.radio(
+                    "Cliente:", 
+                    ["Existente", "➕ Nuevo"], 
+                    horizontal=True, 
+                    key="reg_opcion_cliente_form"
+                )
 
-if opcion_cliente == "Existente":
-    cliente_final = st.selectbox(
-        "Seleccionar Jugador:", 
-        clientes_existentes, 
-        key="reg_cliente_existente_form_" + str(random.randint(0, 1000))  # ← Key ÚNICA
-    )
-else:
-    cliente_final = st.text_input(
-        "Nombre del Nuevo Jugador:", 
-        key="reg_cliente_nuevo_form_" + str(random.randint(0, 1000)),  # ← Key ÚNICA
-        placeholder="Ej: Juan Pérez"
-    ).strip()
+                if opcion_cliente == "Existente":
+                    cliente_final = st.selectbox(
+                        "Seleccionar Jugador:", 
+                        clientes_existentes, 
+                        key="reg_cliente_existente_form_" + str(random.randint(0, 1000))
+                    )
+                else:
+                    cliente_final = st.text_input(
+                        "Nombre del Nuevo Jugador:", 
+                        key="reg_cliente_nuevo_form_" + str(random.randint(0, 1000)),
+                        placeholder="Ej: Juan Pérez"
+                    ).strip()
+
                 opciones_tipo = [
                     "🟢 Saldo agregado (+)",
                     "🔴 Partida jugada (-)",
@@ -767,7 +768,6 @@ else:
                             
                             time.sleep(0.5)
                             st.rerun()
-
         # --- MÓDULO DE EDICIÓN DE MOVIMIENTOS ---
         with st.expander("✏️ EDITAR O CORREGIR MOVIMIENTO", expanded=False):
             if not df_movimientos.empty:
