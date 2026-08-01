@@ -131,24 +131,120 @@ except Exception as e:
 
 # --- FUNCIONES DE APOYO ---
 def obtener_datos():
+    """Obtiene todos los datos de Google Sheets"""
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
+    
     if df.empty:
-        df = pd.DataFrame(columns=["Fecha", "Hora", "Cliente", "Tipo", "Monto", "Detalle"])
+        df = pd.DataFrame(columns=["Fecha", "Hora", "Cliente", "Tipo", "Monto", "Detalle", "Saldo_Anterior", "Saldo_Nuevo"])
     else:
-        df["Monto"] = pd.to_numeric(df["Monto"], errors="coerce").fillna(0)
+        # Asegurar que las columnas existen
+        for col in ["Monto", "Saldo_Anterior", "Saldo_Nuevo"]:
+            if col not in df.columns:
+                df[col] = 0.0
+            else:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        
         df["Fecha"] = df["Fecha"].astype(str)
+    
     return df
 
+def calcular_saldo_anterior(df, cliente, idx_actual):
+    """Calcula el saldo anterior para un movimiento específico"""
+    # Filtrar movimientos del cliente hasta la fila anterior
+    df_cliente = df[df["Cliente"] == cliente].copy()
+    
+    if idx_actual > 0 and len(df_cliente) > 0:
+        # Obtener solo los movimientos anteriores al actual
+        df_anteriores = df_cliente.head(idx_actual)
+        if not df_anteriores.empty:
+            # Calcular el saldo sumando los netos anteriores
+            saldo_anterior = 0
+            for _, row in df_anteriores.iterrows():
+                neto = calcular_neto(row)
+                saldo_anterior += neto
+            return saldo_anterior
+    
+    return 0.0
+
 def guardar_movimiento(fecha, hora, cliente, tipo, monto, detalle):
-    sheet.append_row([str(fecha), str(hora), cliente, tipo, float(monto), detalle])
+    """Guarda un movimiento con saldo anterior y nuevo"""
+    # Obtener datos actuales
+    df = obtener_datos()
+    
+    # Calcular saldo anterior del cliente
+    df_cliente = df[df["Cliente"] == cliente].copy()
+    
+    saldo_anterior = 0.0
+    if not df_cliente.empty:
+        # Calcular saldo actual sumando todos los movimientos anteriores
+        for _, row in df_cliente.iterrows():
+            saldo_anterior += calcular_neto(row)
+    
+    # Calcular el neto del nuevo movimiento
+    neto = 0
+    if tipo in ["🟢 Saldo agregado (+)", "🟡 Partida ganada (+)", "🔵 Reintegro (+)"]:
+        neto = monto
+    elif tipo in ["🔴 Partida jugada (-)", "🟣 Retiro (-)"]:
+        neto = -monto
+    
+    # Calcular saldo nuevo
+    saldo_nuevo = saldo_anterior + neto
+    
+    # Guardar en Google Sheets con saldo anterior y nuevo
+    sheet.append_row([
+        str(fecha), 
+        str(hora), 
+        cliente, 
+        tipo, 
+        float(monto), 
+        detalle,
+        float(saldo_anterior),
+        float(saldo_nuevo)
+    ])
 
 def actualizar_movimiento(fila_sheets, fecha, hora, cliente, tipo, monto, detalle):
-    rango = f"A{fila_sheets}:F{fila_sheets}"
-    valores = [[str(fecha), str(hora), cliente, tipo, float(monto), detalle]]
+    """Actualiza un movimiento recalculando saldos anteriores y nuevos"""
+    # Obtener datos actuales
+    df = obtener_datos()
+    
+    # Obtener el índice real de la fila (0-based)
+    idx_real = fila_sheets - 2  # -2 por el encabezado y base 0
+    
+    # Calcular saldo anterior basado en movimientos previos del mismo cliente
+    df_cliente = df[df["Cliente"] == cliente].copy()
+    
+    saldo_anterior = 0.0
+    for i, row in df_cliente.iterrows():
+        if i < idx_real:
+            saldo_anterior += calcular_neto(row)
+    
+    # Calcular el neto del nuevo movimiento
+    neto = 0
+    if tipo in ["🟢 Saldo agregado (+)", "🟡 Partida ganada (+)", "🔵 Reintegro (+)"]:
+        neto = monto
+    elif tipo in ["🔴 Partida jugada (-)", "🟣 Retiro (-)"]:
+        neto = -monto
+    
+    # Calcular saldo nuevo
+    saldo_nuevo = saldo_anterior + neto
+    
+    # Actualizar en Google Sheets (8 columnas ahora)
+    rango = f"A{fila_sheets}:H{fila_sheets}"
+    valores = [[
+        str(fecha), 
+        str(hora), 
+        cliente, 
+        tipo, 
+        float(monto), 
+        detalle,
+        float(saldo_anterior),
+        float(saldo_nuevo)
+    ]]
     sheet.update(rango, valores)
 
 def calcular_neto(row):
+    """Calcula el neto de un movimiento"""
     t = row["Tipo"]
     m = row["Monto"]
     if t in ["🟢 Saldo agregado (+)", "🟡 Partida ganada (+)", "🔵 Reintegro (+)"]:
@@ -158,15 +254,10 @@ def calcular_neto(row):
     return 0
 
 # --- INICIALIZACIÓN DE ESTADO DE SESIÓN (SESSION STATE) ---
-# TODAS las variables de session_state deben inicializarse AQUÍ, al principio
 if "ganador_ruleta_hoy" not in st.session_state:
     st.session_state["ganador_ruleta_hoy"] = None
 if "bloqueo_envio_admin" not in st.session_state:
     st.session_state["bloqueo_envio_admin"] = False
-if "monto_input" not in st.session_state:
-    st.session_state["monto_input"] = 0.0
-if "detalle_input" not in st.session_state:
-    st.session_state["detalle_input"] = ""
 
 # Cargar datos
 df_movimientos = obtener_datos()
@@ -217,6 +308,12 @@ if modo_acceso == "👤 MODO JUGADOR":
                 if not df_jugador.empty:
                     df_jugador["Neto"] = df_jugador.apply(calcular_neto, axis=1)
                     saldo_actual = df_jugador["Neto"].sum()
+                    
+                    # Calcular saldo anterior (antes del último movimiento)
+                    saldo_anterior = saldo_actual
+                    if not df_jugador.empty:
+                        ultimo_neto = calcular_neto(df_jugador.iloc[-1])
+                        saldo_anterior = saldo_actual - ultimo_neto
 
                     partidas_jugadas_hoy = len(df_jugador[(df_jugador["Fecha"] == fecha_hoy_str) & (df_jugador["Tipo"] == "🔴 Partida jugada (-)")])
                     partidas_ganadas_hoy = len(df_jugador[(df_jugador["Fecha"] == fecha_hoy_str) & (df_jugador["Tipo"] == "🟡 Partida ganada (+)")])
@@ -226,6 +323,9 @@ if modo_acceso == "👤 MODO JUGADOR":
                             <div class="saldo-title">SALDO NETO DISPONIBLE</div>
                             <div class="saldo-amount">${saldo_actual:,.2f}</div>
                             <div style="color: #94A3B8; font-size: 13px; margin-top: 5px;">Jugador: <b>{jugador_seleccionado}</b></div>
+                            <div style="color: #8B949E; font-size: 12px; margin-top: 5px;">
+                                📊 Saldo anterior: <b>${saldo_anterior:,.2f}</b> | Último movimiento: <b>${df_jugador.iloc[-1]['Monto']:,.2f}</b>
+                            </div>
                         </div>
                     """, unsafe_allow_html=True)
 
@@ -251,11 +351,27 @@ if modo_acceso == "👤 MODO JUGADOR":
                         st.info(f"🎯 Juega {3 - partidas_jugadas_hoy} partida(s) más hoy para entrar a la ruleta.")
 
                     st.markdown("### 📜 HISTORIAL RECIENTE")
-                    df_mostrar = df_jugador[["Fecha", "Hora", "Tipo", "Monto", "Detalle"]].iloc[::-1].reset_index(drop=True)
+                    df_mostrar = df_jugador[["Fecha", "Hora", "Tipo", "Monto", "Detalle", "Saldo_Anterior", "Saldo_Nuevo"]].iloc[::-1].reset_index(drop=True)
+                    
+                    # Formatear para mostrar
+                    df_mostrar_formateado = df_mostrar.copy()
+                    df_mostrar_formateado["Saldo_Anterior"] = df_mostrar_formateado["Saldo_Anterior"].apply(lambda x: f"${x:,.2f}")
+                    df_mostrar_formateado["Saldo_Nuevo"] = df_mostrar_formateado["Saldo_Nuevo"].apply(lambda x: f"${x:,.2f}")
+                    df_mostrar_formateado["Monto"] = df_mostrar_formateado["Monto"].apply(lambda x: f"${x:,.2f}")
+                    
                     st.dataframe(
-                        df_mostrar.style.format({"Monto": "${:,.2f}"}),
+                        df_mostrar_formateado,
                         use_container_width=True,
-                        hide_index=True
+                        hide_index=True,
+                        column_config={
+                            "Fecha": "📅 Fecha",
+                            "Hora": "🕐 Hora",
+                            "Tipo": "📌 Tipo",
+                            "Monto": "💰 Monto",
+                            "Detalle": "📝 Detalle",
+                            "Saldo_Anterior": "📊 Saldo Anterior",
+                            "Saldo_Nuevo": "💰 Saldo Nuevo"
+                        }
                     )
                 else:
                     st.info(f"Hola {jugador_seleccionado}, aún no registras movimientos.")
@@ -264,81 +380,198 @@ if modo_acceso == "👤 MODO JUGADOR":
 
     # --- TAB 2: RANKING ---
     with tab_ranking:
-        st.markdown("### 🥇 PODIO DE CAMPEONES")
-        filtro_rango = st.radio("Período:", ["Hoy", "Histórico General"], horizontal=True)
+        st.markdown("### 🏆 RANKING DE JUGADORES")
+        st.caption("📊 Las victorias se suman automáticamente al registrar '🟡 Partida ganada (+)'")
+        
+        filtro_rango = st.radio(
+            "📅 Período:", 
+            ["🏆 Ranking del Día", "👑 Ranking General"], 
+            horizontal=True,
+            index=0
+        )
 
         if not df_movimientos.empty:
-            if filtro_rango == "Hoy":
-                df_ganadores = df_movimientos[(df_movimientos["Fecha"] == fecha_hoy_str) & (df_movimientos["Tipo"] == "🟡 Partida ganada (+)")]
+            if filtro_rango == "🏆 Ranking del Día":
+                df_victorias = df_movimientos[
+                    (df_movimientos["Fecha"] == fecha_hoy_str) & 
+                    (df_movimientos["Tipo"] == "🟡 Partida ganada (+)")
+                ]
+                titulo = f"🏆 VICTORIAS DE HOY ({fecha_hoy_str})"
             else:
-                df_ganadores = df_movimientos[df_movimientos["Tipo"] == "🟡 Partida ganada (+)"]
+                df_victorias = df_movimientos[df_movimientos["Tipo"] == "🟡 Partida ganada (+)"]
+                titulo = "👑 RANKING GENERAL HISTÓRICO"
 
-            if not df_ganadores.empty:
-                ranking_df = df_ganadores.groupby("Cliente").size().reset_index(name="Victorias")
+            if not df_victorias.empty:
+                ranking_df = df_victorias.groupby("Cliente").size().reset_index(name="Victorias")
                 ranking_df = ranking_df.sort_values(by="Victorias", ascending=False).reset_index(drop=True)
-
+                
+                st.markdown(f"### {titulo}")
+                st.write(f"Total de partidas ganadas registradas: {len(df_victorias)}")
+                
+                st.markdown("### 🥇 PODIO DE CAMPEONES")
+                
                 col_p1, col_p2, col_p3 = st.columns(3)
                 
                 if len(ranking_df) >= 1:
-                    col_p1.markdown(f"""
-                        <div class="gaming-card" style="border-color: #FFD700;">
-                            <div style="font-size: 30px;">🥇</div>
-                            <div style="font-weight: 800; font-size: 18px; color: #FFD700;">{ranking_df.iloc[0]['Cliente']}</div>
-                            <div style="color: #8B949E; font-size: 13px;">{ranking_df.iloc[0]['Victorias']} Victorias</div>
-                        </div>
-                    """, unsafe_allow_html=True)
+                    with col_p1:
+                        st.markdown(f"""
+                            <div class="gaming-card" style="border-color: #FFD700; border-width: 3px;">
+                                <div style="font-size: 40px;">🥇</div>
+                                <div style="font-weight: 900; font-size: 20px; color: #FFD700;">{ranking_df.iloc[0]['Cliente']}</div>
+                                <div style="color: #FFD700; font-size: 24px; font-weight: 800;">{ranking_df.iloc[0]['Victorias']}</div>
+                                <div style="color: #8B949E; font-size: 13px;">Victorias</div>
+                            </div>
+                        """, unsafe_allow_html=True)
+                
                 if len(ranking_df) >= 2:
-                    col_p2.markdown(f"""
-                        <div class="gaming-card" style="border-color: #C0C0C0;">
-                            <div style="font-size: 30px;">🥈</div>
-                            <div style="font-weight: 800; font-size: 18px; color: #C0C0C0;">{ranking_df.iloc[1]['Cliente']}</div>
-                            <div style="color: #8B949E; font-size: 13px;">{ranking_df.iloc[1]['Victorias']} Victorias</div>
-                        </div>
-                    """, unsafe_allow_html=True)
+                    with col_p2:
+                        st.markdown(f"""
+                            <div class="gaming-card" style="border-color: #C0C0C0; border-width: 3px;">
+                                <div style="font-size: 40px;">🥈</div>
+                                <div style="font-weight: 900; font-size: 20px; color: #C0C0C0;">{ranking_df.iloc[1]['Cliente']}</div>
+                                <div style="color: #C0C0C0; font-size: 24px; font-weight: 800;">{ranking_df.iloc[1]['Victorias']}</div>
+                                <div style="color: #8B949E; font-size: 13px;">Victorias</div>
+                            </div>
+                        """, unsafe_allow_html=True)
+                
                 if len(ranking_df) >= 3:
-                    col_p3.markdown(f"""
-                        <div class="gaming-card" style="border-color: #CD7F32;">
-                            <div style="font-size: 30px;">🥉</div>
-                            <div style="font-weight: 800; font-size: 18px; color: #CD7F32;">{ranking_df.iloc[2]['Cliente']}</div>
-                            <div style="color: #8B949E; font-size: 13px;">{ranking_df.iloc[2]['Victorias']} Victorias</div>
-                        </div>
-                    """, unsafe_allow_html=True)
+                    with col_p3:
+                        st.markdown(f"""
+                            <div class="gaming-card" style="border-color: #CD7F32; border-width: 3px;">
+                                <div style="font-size: 40px;">🥉</div>
+                                <div style="font-weight: 900; font-size: 20px; color: #CD7F32;">{ranking_df.iloc[2]['Cliente']}</div>
+                                <div style="color: #CD7F32; font-size: 24px; font-weight: 800;">{ranking_df.iloc[2]['Victorias']}</div>
+                                <div style="color: #8B949E; font-size: 13px;">Victorias</div>
+                            </div>
+                        """, unsafe_allow_html=True)
 
-                st.markdown("### 📊 TABLA GENERAL DE LÍDERES")
-                ranking_df.index += 1
-                st.dataframe(ranking_df, use_container_width=True)
+                st.markdown("### 📊 TABLA DE POSICIONES")
+                
+                ranking_df.insert(0, "Posición", range(1, len(ranking_df) + 1))
+                
+                def color_posicion(val):
+                    if val == 1:
+                        return 'background-color: #FFD700; color: #000000; font-weight: bold;'
+                    elif val == 2:
+                        return 'background-color: #C0C0C0; color: #000000; font-weight: bold;'
+                    elif val == 3:
+                        return 'background-color: #CD7F32; color: #000000; font-weight: bold;'
+                    return ''
+                
+                st.dataframe(
+                    ranking_df.style
+                    .format({"Victorias": "{:,.0f}"})
+                    .applymap(color_posicion, subset=['Posición']),
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                with st.expander("📊 ESTADÍSTICAS ADICIONALES", expanded=False):
+                    col_est1, col_est2, col_est3, col_est4 = st.columns(4)
+                    
+                    with col_est1:
+                        st.metric("Total Jugadores", len(ranking_df))
+                    
+                    with col_est2:
+                        total_victorias = ranking_df["Victorias"].sum()
+                        st.metric("Total Victorias", total_victorias)
+                    
+                    with col_est3:
+                        promedio = round(total_victorias / len(ranking_df) if len(ranking_df) > 0 else 0, 1)
+                        st.metric("Promedio/Jugador", promedio)
+                    
+                    with col_est4:
+                        max_victorias = ranking_df["Victorias"].max() if not ranking_df.empty else 0
+                        st.metric("Máximo Victorias", max_victorias)
+                    
+                    todos_jugadores = set(clientes_existentes)
+                    jugadores_con_victorias = set(ranking_df["Cliente"].tolist())
+                    jugadores_sin_victorias = todos_jugadores - jugadores_con_victorias
+                    
+                    if jugadores_sin_victorias:
+                        st.warning(f"⚠️ Jugadores sin victorias: {', '.join(jugadores_sin_victorias)}")
+                
             else:
-                st.info("Sin partidas ganadas en este lapso de tiempo.")
+                st.info("📭 No hay victorias registradas en este período.")
+                
+                if filtro_rango == "🏆 Ranking del Día":
+                    st.info("💡 Registra partidas ganadas con el tipo: '🟡 Partida ganada (+)' para que aparezcan aquí.")
+                else:
+                    st.info("💡 Aún no hay victorias en el historial general.")
+        else:
+            st.info("📭 Sin registros en la base de datos.")
 
     # --- TAB 3: RULETA DIARIA (VISTA JUGADOR) ---
     with tab_ruleta:
         st.markdown("### 🎡 SORTEO DE RULETA DIARIA")
-        st.caption("Entran automáticamente los jugadores que hayan alcanzado 3 o más partidas hoy.")
+        st.caption("🎯 Los jugadores con 3 o más partidas jugadas hoy participan automáticamente")
+        
+        hora_actual = datetime.now().strftime("%I:%M %p")
+        st.info(f"🕐 Hora actual: {hora_actual} | Fecha: {fecha_hoy_str}")
 
         if not df_movimientos.empty:
-            df_jugadas_hoy = df_movimientos[(df_movimientos["Fecha"] == fecha_hoy_str) & (df_movimientos["Tipo"] == "🔴 Partida jugada (-)")]
+            df_jugadas_hoy = df_movimientos[
+                (df_movimientos["Fecha"] == fecha_hoy_str) & 
+                (df_movimientos["Tipo"] == "🔴 Partida jugada (-)")
+            ]
+            
             conteo = df_jugadas_hoy.groupby("Cliente").size().reset_index(name="Cant")
             calificados_list = conteo[conteo["Cant"] >= 3]["Cliente"].tolist()
 
             if len(calificados_list) > 0:
                 st.write(f"👥 **Jugadores Calificados Hoy ({len(calificados_list)}):**")
-                cols_cal = st.columns(len(calificados_list))
-                for idx, nom in enumerate(calificados_list):
-                    cols_cal[idx].markdown(f"<div class='gaming-card' style='padding: 10px; font-weight: bold; color: #238636;'>✅ {nom}</div>", unsafe_allow_html=True)
+                
+                cols_cal = st.columns(min(len(calificados_list), 6))
+                for idx, nom in enumerate(calificados_list[:6]):
+                    partidas = conteo[conteo['Cliente'] == nom]['Cant'].values[0]
+                    cols_cal[idx].markdown(f"""
+                        <div class='gaming-card' style='padding: 10px; border-color: #238636;'>
+                            <div style='font-size: 24px;'>✅</div>
+                            <div style='font-weight: bold; color: #238636;'>{nom}</div>
+                            <div style='color: #8B949E; font-size: 11px;'>{partidas} partidas</div>
+                        </div>
+                    """, unsafe_allow_html=True)
 
                 st.markdown("<br>", unsafe_allow_html=True)
 
                 if st.session_state["ganador_ruleta_hoy"]:
                     st.markdown(f"""
-                        <div class="gaming-card" style="border-color: #238636; background: linear-gradient(135deg, #1C4429 0%, #111827 100%); padding: 35px;">
-                            <div style="font-size: 16px; color: #3FB950; font-weight: 800;">🎉 ¡GANADOR OFICIAL DEL SORTEO DE HOY! 🎉</div>
-                            <div style="font-size: 42px; font-weight: 900; color: #FFFFFF; text-shadow: 0 0 10px #3FB950;">👑 {st.session_state['ganador_ruleta_hoy']} 👑</div>
+                        <div class="gaming-card" style="border-color: #FFD700; background: linear-gradient(135deg, #1C4429 0%, #111827 100%); padding: 35px; border-width: 3px;">
+                            <div style="font-size: 16px; color: #FFD700; font-weight: 800;">🎉 ¡GANADOR OFICIAL DEL SORTEO DE HOY! 🎉</div>
+                            <div style="font-size: 42px; font-weight: 900; color: #FFFFFF; text-shadow: 0 0 20px #FFD700;">👑 {st.session_state['ganador_ruleta_hoy']} 👑</div>
+                            <div style="color: #3FB950; font-size: 14px; margin-top: 10px;">🏆 Premio: 3 partidas gratis</div>
                         </div>
                     """, unsafe_allow_html=True)
                 else:
                     st.info("⏳ La ruleta aún no ha sido girada el día de hoy. El administrador la girará al final de la jornada.")
+                    
+                    st.markdown("### 📊 Tu progreso")
+                    for jugador in clientes_existentes:
+                        if jugador in conteo['Cliente'].values:
+                            partidas = conteo[conteo['Cliente'] == jugador]['Cant'].values[0]
+                            if partidas < 3:
+                                faltan = 3 - partidas
+                                st.progress(partidas/3, text=f"{jugador}: {partidas}/3 partidas - Faltan {faltan} para calificar")
+                            else:
+                                st.success(f"✅ {jugador}: ¡Ya calificado con {partidas} partidas!")
+                        else:
+                            st.info(f"📌 {jugador}: 0/3 partidas - Registra tus partidas para participar")
             else:
                 st.warning("⚠️ Aún no hay jugadores calificados con 3 partidas hoy.")
+                
+                if not df_jugadas_hoy.empty:
+                    st.markdown("### 📊 Progreso de jugadores hoy:")
+                    for _, row in conteo.iterrows():
+                        partidas = row["Cant"]
+                        if partidas < 3:
+                            faltan = 3 - partidas
+                            st.progress(partidas/3, text=f"{row['Cliente']}: {partidas}/3 partidas - Faltan {faltan}")
+                        else:
+                            st.success(f"✅ {row['Cliente']}: {partidas}/3 partidas - ¡CALIFICADO!")
+                else:
+                    st.info("💡 Registra tus primeras partidas para participar en la ruleta.")
+        else:
+            st.info("Sin registros en la base de datos.")
 
 # ==============================================================================
 # MODO 2: ADMINISTRADOR (🔑 CON AUTOLIMPIEZA Y SELECTOR INTERACTIVO)
@@ -354,115 +587,168 @@ else:
 
         # --- SECCIÓN EXCLUSIVA DE GESTIÓN DE RULETA ---
         with st.expander("🎡 CONTROL DE RULETA DIARIA (EXCLUSIVO ADMIN)", expanded=True):
-            if not df_movimientos.empty:
-                df_jugadas_hoy = df_movimientos[(df_movimientos["Fecha"] == fecha_hoy_str) & (df_movimientos["Tipo"] == "🔴 Partida jugada (-)")]
-                conteo = df_jugadas_hoy.groupby("Cliente").size().reset_index(name="Cant")
-                calificados_list = conteo[conteo["Cant"] >= 3]["Cliente"].tolist()
-
-                if len(calificados_list) > 0:
-                    st.write(f"👥 **Participantes Calificados para Girar:** {', '.join(calificados_list)}")
-                    
-                    if st.button("🎡 ¡GIRAR RULETA AHORA!", type="primary"):
+            
+            hora_actual = datetime.now().strftime("%I:%M %p")
+            st.info(f"🕐 Hora actual: {hora_actual} | Fecha: {fecha_hoy_str}")
+            
+            df_jugadas_hoy = df_movimientos[
+                (df_movimientos["Fecha"] == fecha_hoy_str) & 
+                (df_movimientos["Tipo"] == "🔴 Partida jugada (-)")
+            ]
+            
+            conteo = df_jugadas_hoy.groupby("Cliente").size().reset_index(name="Cant")
+            
+            if not df_jugadas_hoy.empty:
+                st.write(f"📊 **Total de partidas jugadas hoy:** {len(df_jugadas_hoy)}")
+                
+                st.write("📋 **Progreso de jugadores:**")
+                for _, row in conteo.iterrows():
+                    partidas = row["Cant"]
+                    progreso = min(partidas, 3)
+                    barra = "🟩" * progreso + "⬜" * (3 - progreso)
+                    if partidas >= 3:
+                        st.success(f"✅ {row['Cliente']}: {barra} {partidas}/3 - ¡CALIFICADO! 🎯")
+                    else:
+                        st.info(f"📌 {row['Cliente']}: {barra} {partidas}/3")
+            else:
+                st.warning("⚠️ Aún no hay partidas registradas hoy con '🔴 Partida jugada (-)'")
+                st.info("💡 Registra partidas con el tipo: 🔴 Partida jugada (-)")
+            
+            calificados_list = conteo[conteo["Cant"] >= 3]["Cliente"].tolist()
+            
+            st.markdown("---")
+            
+            if len(calificados_list) > 0:
+                st.success(f"🎯 **Participantes Calificados para la Ruleta ({len(calificados_list)}):**")
+                
+                cols = st.columns(min(len(calificados_list), 4))
+                for idx, jugador in enumerate(calificados_list[:4]):
+                    cols[idx].markdown(f"""
+                        <div class="gaming-card" style="padding: 10px; border-color: #FFD700;">
+                            <div style="font-size: 24px;">🎯</div>
+                            <div style="font-weight: 800; color: #FFD700;">{jugador}</div>
+                            <div style="color: #8B949E; font-size: 12px;">{conteo[conteo['Cliente'] == jugador]['Cant'].values[0]} partidas</div>
+                        </div>
+                    """, unsafe_allow_html=True)
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                if st.session_state["ganador_ruleta_hoy"]:
+                    st.markdown(f"""
+                        <div class="gaming-card" style="border-color: #238636; background: linear-gradient(135deg, #1C4429 0%, #111827 100%); padding: 35px;">
+                            <div style="font-size: 16px; color: #3FB950; font-weight: 800;">🎉 ¡RULETA DE HOY YA FUE GIRADA! 🎉</div>
+                            <div style="font-size: 42px; font-weight: 900; color: #FFFFFF; text-shadow: 0 0 10px #3FB950;">👑 {st.session_state['ganador_ruleta_hoy']} 👑</div>
+                            <div style="color: #8B949E; margin-top: 10px;">El ganador ya fue seleccionado para hoy</div>
+                        </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    if st.button("🎡 ¡GIRAR RULETA AHORA!", type="primary", use_container_width=True):
                         placeholder = st.empty()
-                        for i in range(25):
+                        
+                        for i in range(30):
                             seleccionado_temp = random.choice(calificados_list)
                             placeholder.markdown(f"""
                                 <div class="gaming-card" style="border-color: #A371F7; padding: 30px;">
-                                    <div style="font-size: 14px; color: #A371F7; font-weight: 800;">GIRANDO RULETA EN VIVO...</div>
-                                    <div style="font-size: 38px; font-weight: 900; color: #FFFFFF;">🔄 {seleccionado_temp} 🔄</div>
+                                    <div style="font-size: 14px; color: #A371F7; font-weight: 800;">🔄 GIRANDO RULETA EN VIVO...</div>
+                                    <div style="font-size: 42px; font-weight: 900; color: #FFFFFF; transition: all 0.1s ease;">
+                                        {seleccionado_temp}
+                                    </div>
+                                    <div style="color: #8B949E; font-size: 12px; margin-top: 10px;">
+                                        Participante {i+1}/30
+                                    </div>
                                 </div>
                             """, unsafe_allow_html=True)
-                            time.sleep(0.08 + (i * 0.01))
+                            time.sleep(0.06 + (i * 0.008))
                         
                         ganador_final = random.choice(calificados_list)
                         st.session_state["ganador_ruleta_hoy"] = ganador_final
                         
                         placeholder.markdown(f"""
-                            <div class="gaming-card" style="border-color: #238636; background: linear-gradient(135deg, #1C4429 0%, #111827 100%); padding: 35px;">
-                                <div style="font-size: 16px; color: #3FB950; font-weight: 800;">🎉 ¡GANADOR DEL PREMIO EXTRA! 🎉</div>
-                                <div style="font-size: 42px; font-weight: 900; color: #FFFFFF; text-shadow: 0 0 10px #3FB950;">👑 {ganador_final} 👑</div>
+                            <div class="gaming-card" style="border-color: #FFD700; background: linear-gradient(135deg, #1C4429 0%, #111827 100%); padding: 35px; border-width: 3px; animation: pulse 1s ease-in-out infinite;">
+                                <div style="font-size: 18px; color: #FFD700; font-weight: 800;">🎉 ¡GANADOR DEL PREMIO EXTRA! 🎉</div>
+                                <div style="font-size: 52px; font-weight: 900; color: #FFFFFF; text-shadow: 0 0 30px #FFD700;">👑 {ganador_final} 👑</div>
+                                <div style="color: #3FB950; font-size: 16px; margin-top: 10px;">🏆 Premio: 3 partidas gratis</div>
                             </div>
                         """, unsafe_allow_html=True)
+                        
                         st.balloons()
-                else:
-                    st.info("⚠️ Aún no hay jugadores calificados para girar la ruleta hoy.")
+                        st.success(f"✅ ¡{ganador_final} ha ganado la ruleta de hoy!")
+                        
+                        time.sleep(3)
+                        st.rerun()
+            else:
+                st.warning("⚠️ Aún no hay jugadores con 3 partidas hoy.")
+                st.info("📌 Los jugadores aparecerán aquí cuando completen 3 partidas jugadas.")
         
         # --- REGISTRO DE MOVIMIENTOS ---
         with st.expander("➕ REGISTRAR NUEVO MOVIMIENTO", expanded=True):
             
-            # 1. Selector interactivo fuera de st.form para alternar entre Existente y Nuevo en tiempo real
-            opcion_cliente = st.radio("Cliente:", ["Existente", "➕ Nuevo"], horizontal=True, key="reg_opcion_cliente")
-
-            if opcion_cliente == "Existente":
-                cliente_final = st.selectbox("Seleccionar Jugador:", clientes_existentes, key="reg_cliente_existente")
-            else:
-                cliente_final = st.text_input("Nombre del Nuevo Jugador:", key="reg_cliente_nuevo").strip()
-
-            opciones_tipo = [
-                "🟢 Saldo agregado (+)",
-                "🔴 Partida jugada (-)",
-                "🟡 Partida ganada (+)",
-                "🔵 Reintegro (+)",
-                "🟣 Retiro (-)"
-            ]
-            tipo_movimiento = st.selectbox("Tipo de Movimiento:", opciones_tipo, key="reg_tipo_mov")
-            
-            # Campo de monto vinculado a session_state
-            monto = st.number_input("Monto ($):", min_value=0.0, step=1.0, format="%.2f", key="monto_input")
-
-            fecha_actual = st.date_input("Fecha:", datetime.now().date(), key="reg_fecha")
-            
-            col_h1, col_h2, col_ampm = st.columns([1, 1, 1])
-            hora_now = datetime.now()
-            h_12_default = hora_now.hour % 12
-            if h_12_default == 0:
-                h_12_default = 12
-            ampm_default = "PM" if hora_now.hour >= 12 else "AM"
-
-            hora_num = col_h1.number_input("Hora (1-12):", min_value=1, max_value=12, value=h_12_default, step=1, key="reg_hora_num")
-            min_num = col_h2.number_input("Min (0-59):", min_value=0, max_value=59, value=hora_now.minute, step=1, key="reg_min_num")
-            ampm = col_ampm.selectbox("Período:", ["AM", "PM"], index=0 if ampm_default == "AM" else 1, key="reg_ampm")
-
-            hora_formateada = f"{hora_num:02d}:{min_num:02d} {ampm}"
-            detalle = st.text_input("Observaciones:", placeholder="Mesa 1, Nequi, etc.", key="detalle_input")
-
-            # ============================================================
-            # BOTÓN DE GUARDAR CON PROTECCIÓN
-            # ============================================================
-            submit_registro = st.button("💾 GUARDAR TRANSACCIÓN", type="primary")
-
-            # Lógica que se ejecuta al presionar Guardar
-            if submit_registro:
-                # 🛡️ VALIDACIÓN 1: El usuario no escribió ningún cliente
-                if not cliente_final:
-                    st.error("❌ Debes indicar el nombre del jugador.")
+            with st.form(key="registro_movimiento_form"):
                 
-                # 🛡️ VALIDACIÓN 2: El monto es 0 o no ingresó nada
-                elif monto <= 0:
-                    st.warning("⚠️ Debes indicar un monto mayor a $0 para poder guardar la transacción.")
-                    # 🎯 RESETEO DEL MONTO A 0
-                    st.session_state["monto_input"] = 0.0
-                    st.rerun()
+                st.markdown("### 📝 DATOS DE LA TRANSACCIÓN")
                 
-                # ✅ SI TODO ESTÁ BIEN: Registra y restablece el monto a 0.0
+                opcion_cliente = st.radio("Cliente:", ["Existente", "➕ Nuevo"], horizontal=True, key="reg_opcion_cliente_form")
+
+                if opcion_cliente == "Existente":
+                    cliente_final = st.selectbox("Seleccionar Jugador:", clientes_existentes, key="reg_cliente_existente_form")
                 else:
-                    with st.spinner("Guardando en Google Sheets..."):
-                        guardar_movimiento(
-                            fecha_actual.strftime("%Y-%m-%d"),
-                            hora_formateada,
-                            cliente_final,
-                            tipo_movimiento,
-                            monto,
-                            detalle
-                        )
-                        st.toast(f"✅ Transacción de ${monto:,.2f} guardada con éxito a {cliente_final}", icon="🎉")
+                    cliente_final = st.text_input("Nombre del Nuevo Jugador:", key="reg_cliente_nuevo_form").strip()
 
-                        # Restablecer el monto y observaciones en el estado
-                        st.session_state["monto_input"] = 0.0
-                        st.session_state["detalle_input"] = ""
-                        time.sleep(0.8)
-                    
-                    st.rerun()
+                opciones_tipo = [
+                    "🟢 Saldo agregado (+)",
+                    "🔴 Partida jugada (-)",
+                    "🟡 Partida ganada (+)",
+                    "🔵 Reintegro (+)",
+                    "🟣 Retiro (-)"
+                ]
+                
+                st.info("💡 Para sumar una victoria al ranking, selecciona '🟡 Partida ganada (+)")
+                
+                tipo_movimiento = st.selectbox("Tipo de Movimiento:", opciones_tipo, key="reg_tipo_mov_form")
+                
+                monto = st.number_input("Monto ($):", min_value=0.0, step=1.0, format="%.2f", key="monto_input_form", value=0.0)
+
+                fecha_actual = st.date_input("Fecha:", datetime.now().date(), key="reg_fecha_form")
+                
+                col_h1, col_h2, col_ampm = st.columns([1, 1, 1])
+                hora_now = datetime.now()
+                h_12_default = hora_now.hour % 12
+                if h_12_default == 0:
+                    h_12_default = 12
+                ampm_default = "PM" if hora_now.hour >= 12 else "AM"
+
+                hora_num = col_h1.number_input("Hora (1-12):", min_value=1, max_value=12, value=h_12_default, step=1, key="reg_hora_num_form")
+                min_num = col_h2.number_input("Min (0-59):", min_value=0, max_value=59, value=hora_now.minute, step=1, key="reg_min_num_form")
+                ampm = col_ampm.selectbox("Período:", ["AM", "PM"], index=0 if ampm_default == "AM" else 1, key="reg_ampm_form")
+
+                hora_formateada = f"{hora_num:02d}:{min_num:02d} {ampm}"
+                detalle = st.text_input("Observaciones:", placeholder="Mesa 1, Nequi, etc.", key="detalle_input_form")
+
+                submit_registro = st.form_submit_button("💾 GUARDAR TRANSACCIÓN", type="primary")
+
+                if submit_registro:
+                    if not cliente_final:
+                        st.error("❌ Debes indicar el nombre del jugador.")
+                    elif monto <= 0:
+                        st.warning("⚠️ Debes indicar un monto mayor a $0 para poder guardar la transacción.")
+                    else:
+                        with st.spinner("Guardando en Google Sheets..."):
+                            guardar_movimiento(
+                                fecha_actual.strftime("%Y-%m-%d"),
+                                hora_formateada,
+                                cliente_final,
+                                tipo_movimiento,
+                                monto,
+                                detalle
+                            )
+                            
+                            if tipo_movimiento == "🟡 Partida ganada (+)":
+                                st.toast(f"🏆 ¡VICTORIA REGISTRADA! {cliente_final} +1 en el ranking", icon="🏆")
+                            else:
+                                st.toast(f"✅ Transacción de ${monto:,.2f} guardada con éxito a {cliente_final}", icon="🎉")
+                            
+                            time.sleep(0.5)
+                            st.rerun()
 
         # --- MÓDULO DE EDICIÓN DE MOVIMIENTOS ---
         with st.expander("✏️ EDITAR O CORREGIR MOVIMIENTO", expanded=False):
@@ -564,10 +850,29 @@ else:
 
         st.markdown("### 📜 HISTORIAL COMPLETO DE REGISTROS")
         if not df_movimientos.empty:
+            # Mostrar historial con saldo anterior y nuevo
+            df_historial = df_movimientos.iloc[::-1].reset_index(drop=True)
+            df_historial_formateado = df_historial.copy()
+            
+            # Formatear columnas
+            for col in ["Monto", "Saldo_Anterior", "Saldo_Nuevo"]:
+                if col in df_historial_formateado.columns:
+                    df_historial_formateado[col] = df_historial_formateado[col].apply(lambda x: f"${x:,.2f}" if pd.notna(x) else "$0.00")
+            
             st.dataframe(
-                df_movimientos.iloc[::-1].reset_index(drop=True).style.format({"Monto": "${:,.2f}"}),
+                df_historial_formateado,
                 use_container_width=True,
-                hide_index=True
+                hide_index=True,
+                column_config={
+                    "Fecha": "📅 Fecha",
+                    "Hora": "🕐 Hora",
+                    "Cliente": "👤 Cliente",
+                    "Tipo": "📌 Tipo",
+                    "Monto": "💰 Monto",
+                    "Detalle": "📝 Detalle",
+                    "Saldo_Anterior": "📊 Saldo Anterior",
+                    "Saldo_Nuevo": "💰 Saldo Nuevo"
+                }
             )
     elif password != "":
         st.error("🔒 Contraseña incorrecta.")
