@@ -15,7 +15,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- ESTILOS CSS PERSONALIZADOS (ESTILO GAMING / GASTOS DIARIOS) ---
+# --- ESTILOS CSS PERSONALIZADOS ---
 st.markdown("""
 <style>
     .stApp {
@@ -123,8 +123,42 @@ def conectar_google_sheets():
     sheet = client.open("Ludo_Control_Saldos").sheet1
     return sheet
 
+def verificar_y_crear_columnas():
+    """Verifica que todas las columnas existan y las crea si faltan"""
+    try:
+        # Obtener encabezados actuales
+        headers = sheet.row_values(1)
+        
+        # Columnas necesarias en el orden correcto
+        columnas_esperadas = ["Fecha", "Hora", "Cliente", "Tipo", "Monto", "Detalle", "Saldo_Anterior", "Saldo_Nuevo"]
+        
+        # Verificar qué columnas faltan
+        columnas_faltantes = []
+        for col in columnas_esperadas:
+            if col not in headers:
+                columnas_faltantes.append(col)
+        
+        if columnas_faltantes:
+            # Agregar columnas faltantes
+            for col in columnas_faltantes:
+                ultima_columna = len(headers) + 1
+                sheet.add_cols(1)
+                sheet.update_cell(1, ultima_columna, col)
+                headers.append(col)
+            
+            st.success(f"✅ Columnas agregadas: {', '.join(columnas_faltantes)}")
+            st.info("🔄 La página se recargará para aplicar los cambios...")
+            time.sleep(2)
+            st.rerun()
+        
+        return True
+    except Exception as e:
+        st.error(f"⚠️ Error al verificar columnas: {e}")
+        return False
+
 try:
     sheet = conectar_google_sheets()
+    verificar_y_crear_columnas()
 except Exception as e:
     st.error(f"⚠️ Error de conexión con Google Sheets: {e}")
     st.stop()
@@ -151,14 +185,11 @@ def obtener_datos():
 
 def calcular_saldo_anterior(df, cliente, idx_actual):
     """Calcula el saldo anterior para un movimiento específico"""
-    # Filtrar movimientos del cliente hasta la fila anterior
     df_cliente = df[df["Cliente"] == cliente].copy()
     
     if idx_actual > 0 and len(df_cliente) > 0:
-        # Obtener solo los movimientos anteriores al actual
         df_anteriores = df_cliente.head(idx_actual)
         if not df_anteriores.empty:
-            # Calcular el saldo sumando los netos anteriores
             saldo_anterior = 0
             for _, row in df_anteriores.iterrows():
                 neto = calcular_neto(row)
@@ -169,29 +200,23 @@ def calcular_saldo_anterior(df, cliente, idx_actual):
 
 def guardar_movimiento(fecha, hora, cliente, tipo, monto, detalle):
     """Guarda un movimiento con saldo anterior y nuevo"""
-    # Obtener datos actuales
     df = obtener_datos()
     
-    # Calcular saldo anterior del cliente
     df_cliente = df[df["Cliente"] == cliente].copy()
     
     saldo_anterior = 0.0
     if not df_cliente.empty:
-        # Calcular saldo actual sumando todos los movimientos anteriores
         for _, row in df_cliente.iterrows():
             saldo_anterior += calcular_neto(row)
     
-    # Calcular el neto del nuevo movimiento
     neto = 0
     if tipo in ["🟢 Saldo agregado (+)", "🟡 Partida ganada (+)", "🔵 Reintegro (+)"]:
         neto = monto
     elif tipo in ["🔴 Partida jugada (-)", "🟣 Retiro (-)"]:
         neto = -monto
     
-    # Calcular saldo nuevo
     saldo_nuevo = saldo_anterior + neto
     
-    # Guardar en Google Sheets con saldo anterior y nuevo
     sheet.append_row([
         str(fecha), 
         str(hora), 
@@ -205,13 +230,9 @@ def guardar_movimiento(fecha, hora, cliente, tipo, monto, detalle):
 
 def actualizar_movimiento(fila_sheets, fecha, hora, cliente, tipo, monto, detalle):
     """Actualiza un movimiento recalculando saldos anteriores y nuevos"""
-    # Obtener datos actuales
     df = obtener_datos()
+    idx_real = fila_sheets - 2
     
-    # Obtener el índice real de la fila (0-based)
-    idx_real = fila_sheets - 2  # -2 por el encabezado y base 0
-    
-    # Calcular saldo anterior basado en movimientos previos del mismo cliente
     df_cliente = df[df["Cliente"] == cliente].copy()
     
     saldo_anterior = 0.0
@@ -219,17 +240,14 @@ def actualizar_movimiento(fila_sheets, fecha, hora, cliente, tipo, monto, detall
         if i < idx_real:
             saldo_anterior += calcular_neto(row)
     
-    # Calcular el neto del nuevo movimiento
     neto = 0
     if tipo in ["🟢 Saldo agregado (+)", "🟡 Partida ganada (+)", "🔵 Reintegro (+)"]:
         neto = monto
     elif tipo in ["🔴 Partida jugada (-)", "🟣 Retiro (-)"]:
         neto = -monto
     
-    # Calcular saldo nuevo
     saldo_nuevo = saldo_anterior + neto
     
-    # Actualizar en Google Sheets (8 columnas ahora)
     rango = f"A{fila_sheets}:H{fila_sheets}"
     valores = [[
         str(fecha), 
@@ -244,7 +262,6 @@ def actualizar_movimiento(fila_sheets, fecha, hora, cliente, tipo, monto, detall
     sheet.update(rango, valores)
 
 def calcular_neto(row):
-    """Calcula el neto de un movimiento"""
     t = row["Tipo"]
     m = row["Monto"]
     if t in ["🟢 Saldo agregado (+)", "🟡 Partida ganada (+)", "🔵 Reintegro (+)"]:
@@ -253,7 +270,7 @@ def calcular_neto(row):
         return -m
     return 0
 
-# --- INICIALIZACIÓN DE ESTADO DE SESIÓN (SESSION STATE) ---
+# --- INICIALIZACIÓN DE ESTADO DE SESIÓN ---
 if "ganador_ruleta_hoy" not in st.session_state:
     st.session_state["ganador_ruleta_hoy"] = None
 if "bloqueo_envio_admin" not in st.session_state:
@@ -284,7 +301,7 @@ modo_acceso = st.radio(
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ==============================================================================
-# MODO 1: CONSULTA PARA JUGADORES (GAMING UI)
+# MODO 1: CONSULTA PARA JUGADORES
 # ==============================================================================
 if modo_acceso == "👤 MODO JUGADOR":
     
@@ -309,7 +326,6 @@ if modo_acceso == "👤 MODO JUGADOR":
                     df_jugador["Neto"] = df_jugador.apply(calcular_neto, axis=1)
                     saldo_actual = df_jugador["Neto"].sum()
                     
-                    # Calcular saldo anterior (antes del último movimiento)
                     saldo_anterior = saldo_actual
                     if not df_jugador.empty:
                         ultimo_neto = calcular_neto(df_jugador.iloc[-1])
@@ -353,25 +369,15 @@ if modo_acceso == "👤 MODO JUGADOR":
                     st.markdown("### 📜 HISTORIAL RECIENTE")
                     df_mostrar = df_jugador[["Fecha", "Hora", "Tipo", "Monto", "Detalle", "Saldo_Anterior", "Saldo_Nuevo"]].iloc[::-1].reset_index(drop=True)
                     
-                    # Formatear para mostrar
                     df_mostrar_formateado = df_mostrar.copy()
-                    df_mostrar_formateado["Saldo_Anterior"] = df_mostrar_formateado["Saldo_Anterior"].apply(lambda x: f"${x:,.2f}")
-                    df_mostrar_formateado["Saldo_Nuevo"] = df_mostrar_formateado["Saldo_Nuevo"].apply(lambda x: f"${x:,.2f}")
-                    df_mostrar_formateado["Monto"] = df_mostrar_formateado["Monto"].apply(lambda x: f"${x:,.2f}")
+                    for col in ["Monto", "Saldo_Anterior", "Saldo_Nuevo"]:
+                        if col in df_mostrar_formateado.columns:
+                            df_mostrar_formateado[col] = df_mostrar_formateado[col].apply(lambda x: f"${x:,.2f}" if pd.notna(x) else "$0.00")
                     
                     st.dataframe(
                         df_mostrar_formateado,
                         use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "Fecha": "📅 Fecha",
-                            "Hora": "🕐 Hora",
-                            "Tipo": "📌 Tipo",
-                            "Monto": "💰 Monto",
-                            "Detalle": "📝 Detalle",
-                            "Saldo_Anterior": "📊 Saldo Anterior",
-                            "Saldo_Nuevo": "💰 Saldo Nuevo"
-                        }
+                        hide_index=True
                     )
                 else:
                     st.info(f"Hola {jugador_seleccionado}, aún no registras movimientos.")
@@ -574,7 +580,7 @@ if modo_acceso == "👤 MODO JUGADOR":
             st.info("Sin registros en la base de datos.")
 
 # ==============================================================================
-# MODO 2: ADMINISTRADOR (🔑 CON AUTOLIMPIEZA Y SELECTOR INTERACTIVO)
+# MODO 2: ADMINISTRADOR
 # ==============================================================================
 else:
     st.markdown("### 🔑 ACCESO ADMINISTRADOR")
@@ -664,7 +670,7 @@ else:
                         st.session_state["ganador_ruleta_hoy"] = ganador_final
                         
                         placeholder.markdown(f"""
-                            <div class="gaming-card" style="border-color: #FFD700; background: linear-gradient(135deg, #1C4429 0%, #111827 100%); padding: 35px; border-width: 3px; animation: pulse 1s ease-in-out infinite;">
+                            <div class="gaming-card" style="border-color: #FFD700; background: linear-gradient(135deg, #1C4429 0%, #111827 100%); padding: 35px; border-width: 3px;">
                                 <div style="font-size: 18px; color: #FFD700; font-weight: 800;">🎉 ¡GANADOR DEL PREMIO EXTRA! 🎉</div>
                                 <div style="font-size: 52px; font-weight: 900; color: #FFFFFF; text-shadow: 0 0 30px #FFD700;">👑 {ganador_final} 👑</div>
                                 <div style="color: #3FB950; font-size: 16px; margin-top: 10px;">🏆 Premio: 3 partidas gratis</div>
@@ -850,11 +856,9 @@ else:
 
         st.markdown("### 📜 HISTORIAL COMPLETO DE REGISTROS")
         if not df_movimientos.empty:
-            # Mostrar historial con saldo anterior y nuevo
             df_historial = df_movimientos.iloc[::-1].reset_index(drop=True)
             df_historial_formateado = df_historial.copy()
             
-            # Formatear columnas
             for col in ["Monto", "Saldo_Anterior", "Saldo_Nuevo"]:
                 if col in df_historial_formateado.columns:
                     df_historial_formateado[col] = df_historial_formateado[col].apply(lambda x: f"${x:,.2f}" if pd.notna(x) else "$0.00")
@@ -862,17 +866,7 @@ else:
             st.dataframe(
                 df_historial_formateado,
                 use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Fecha": "📅 Fecha",
-                    "Hora": "🕐 Hora",
-                    "Cliente": "👤 Cliente",
-                    "Tipo": "📌 Tipo",
-                    "Monto": "💰 Monto",
-                    "Detalle": "📝 Detalle",
-                    "Saldo_Anterior": "📊 Saldo Anterior",
-                    "Saldo_Nuevo": "💰 Saldo Nuevo"
-                }
+                hide_index=True
             )
     elif password != "":
         st.error("🔒 Contraseña incorrecta.")
