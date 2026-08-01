@@ -15,7 +15,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- ESTILOS CSS PERSONALIZADOS ---
+# --- ESTILOS CSS PERSONALIZADOS (ESTILO GAMING / GASTOS DIARIOS) ---
 st.markdown("""
 <style>
     .stApp {
@@ -123,122 +123,29 @@ def conectar_google_sheets():
     sheet = client.open("Ludo_Control_Saldos").sheet1
     return sheet
 
-def verificar_y_crear_columnas():
-    """Verifica que todas las columnas existan y las crea si faltan"""
-    try:
-        headers = sheet.row_values(1)
-        
-        columnas_esperadas = ["Fecha", "Hora", "Cliente", "Tipo", "Monto", "Detalle", "Saldo_Anterior", "Saldo_Nuevo"]
-        
-        columnas_faltantes = []
-        for col in columnas_esperadas:
-            if col not in headers:
-                columnas_faltantes.append(col)
-        
-        if columnas_faltantes:
-            for col in columnas_faltantes:
-                ultima_columna = len(headers) + 1
-                sheet.add_cols(1)
-                sheet.update_cell(1, ultima_columna, col)
-                headers.append(col)
-            
-            st.success(f"✅ Columnas agregadas: {', '.join(columnas_faltantes)}")
-            st.info("🔄 La página se recargará para aplicar los cambios...")
-            time.sleep(2)
-            st.rerun()
-        
-        return True
-    except Exception as e:
-        st.error(f"⚠️ Error al verificar columnas: {e}")
-        return False
-
 try:
     sheet = conectar_google_sheets()
-    verificar_y_crear_columnas()
 except Exception as e:
     st.error(f"⚠️ Error de conexión con Google Sheets: {e}")
     st.stop()
 
 # --- FUNCIONES DE APOYO ---
 def obtener_datos():
-    """Obtiene todos los datos de Google Sheets"""
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
-    
     if df.empty:
-        df = pd.DataFrame(columns=["Fecha", "Hora", "Cliente", "Tipo", "Monto", "Detalle", "Saldo_Anterior", "Saldo_Nuevo"])
+        df = pd.DataFrame(columns=["Fecha", "Hora", "Cliente", "Tipo", "Monto", "Detalle"])
     else:
-        for col in ["Monto", "Saldo_Anterior", "Saldo_Nuevo"]:
-            if col not in df.columns:
-                df[col] = 0.0
-            else:
-                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-        
+        df["Monto"] = pd.to_numeric(df["Monto"], errors="coerce").fillna(0)
         df["Fecha"] = df["Fecha"].astype(str)
-    
     return df
 
 def guardar_movimiento(fecha, hora, cliente, tipo, monto, detalle):
-    """Guarda un movimiento con saldo anterior y nuevo"""
-    df = obtener_datos()
-    
-    df_cliente = df[df["Cliente"] == cliente].copy()
-    
-    saldo_anterior = 0.0
-    if not df_cliente.empty:
-        for _, row in df_cliente.iterrows():
-            saldo_anterior += calcular_neto(row)
-    
-    neto = 0
-    if tipo in ["🟢 Saldo agregado (+)", "🟡 Partida ganada (+)", "🔵 Reintegro (+)"]:
-        neto = monto
-    elif tipo in ["🔴 Partida jugada (-)", "🟣 Retiro (-)"]:
-        neto = -monto
-    
-    saldo_nuevo = saldo_anterior + neto
-    
-    sheet.append_row([
-        str(fecha), 
-        str(hora), 
-        cliente, 
-        tipo, 
-        float(monto), 
-        detalle,
-        float(saldo_anterior),
-        float(saldo_nuevo)
-    ])
+    sheet.append_row([str(fecha), str(hora), cliente, tipo, float(monto), detalle])
 
 def actualizar_movimiento(fila_sheets, fecha, hora, cliente, tipo, monto, detalle):
-    """Actualiza un movimiento recalculando saldos anteriores y nuevos"""
-    df = obtener_datos()
-    idx_real = fila_sheets - 2
-    
-    df_cliente = df[df["Cliente"] == cliente].copy()
-    
-    saldo_anterior = 0.0
-    for i, row in df_cliente.iterrows():
-        if i < idx_real:
-            saldo_anterior += calcular_neto(row)
-    
-    neto = 0
-    if tipo in ["🟢 Saldo agregado (+)", "🟡 Partida ganada (+)", "🔵 Reintegro (+)"]:
-        neto = monto
-    elif tipo in ["🔴 Partida jugada (-)", "🟣 Retiro (-)"]:
-        neto = -monto
-    
-    saldo_nuevo = saldo_anterior + neto
-    
-    rango = f"A{fila_sheets}:H{fila_sheets}"
-    valores = [[
-        str(fecha), 
-        str(hora), 
-        cliente, 
-        tipo, 
-        float(monto), 
-        detalle,
-        float(saldo_anterior),
-        float(saldo_nuevo)
-    ]]
+    rango = f"A{fila_sheets}:F{fila_sheets}"
+    valores = [[str(fecha), str(hora), cliente, tipo, float(monto), detalle]]
     sheet.update(rango, valores)
 
 def calcular_neto(row):
@@ -250,7 +157,7 @@ def calcular_neto(row):
         return -m
     return 0
 
-# --- INICIALIZACIÓN DE ESTADO DE SESIÓN ---
+# --- INICIALIZACIÓN DE ESTADO DE SESIÓN (SESSION STATE) ---
 if "ganador_ruleta_hoy" not in st.session_state:
     st.session_state["ganador_ruleta_hoy"] = None
 if "bloqueo_envio_admin" not in st.session_state:
@@ -281,7 +188,7 @@ modo_acceso = st.radio(
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ==============================================================================
-# MODO 1: CONSULTA PARA JUGADORES
+# MODO 1: CONSULTA PARA JUGADORES (GAMING UI)
 # ==============================================================================
 if modo_acceso == "👤 MODO JUGADOR":
     
@@ -305,11 +212,6 @@ if modo_acceso == "👤 MODO JUGADOR":
                 if not df_jugador.empty:
                     df_jugador["Neto"] = df_jugador.apply(calcular_neto, axis=1)
                     saldo_actual = df_jugador["Neto"].sum()
-                    
-                    saldo_anterior = saldo_actual
-                    if not df_jugador.empty:
-                        ultimo_neto = calcular_neto(df_jugador.iloc[-1])
-                        saldo_anterior = saldo_actual - ultimo_neto
 
                     partidas_jugadas_hoy = len(df_jugador[(df_jugador["Fecha"] == fecha_hoy_str) & (df_jugador["Tipo"] == "🔴 Partida jugada (-)")])
                     partidas_ganadas_hoy = len(df_jugador[(df_jugador["Fecha"] == fecha_hoy_str) & (df_jugador["Tipo"] == "🟡 Partida ganada (+)")])
@@ -319,9 +221,6 @@ if modo_acceso == "👤 MODO JUGADOR":
                             <div class="saldo-title">SALDO NETO DISPONIBLE</div>
                             <div class="saldo-amount">${saldo_actual:,.2f}</div>
                             <div style="color: #94A3B8; font-size: 13px; margin-top: 5px;">Jugador: <b>{jugador_seleccionado}</b></div>
-                            <div style="color: #8B949E; font-size: 12px; margin-top: 5px;">
-                                📊 Saldo anterior: <b>${saldo_anterior:,.2f}</b> | Último movimiento: <b>${df_jugador.iloc[-1]['Monto']:,.2f}</b>
-                            </div>
                         </div>
                     """, unsafe_allow_html=True)
 
@@ -347,15 +246,9 @@ if modo_acceso == "👤 MODO JUGADOR":
                         st.info(f"🎯 Juega {3 - partidas_jugadas_hoy} partida(s) más hoy para entrar a la ruleta.")
 
                     st.markdown("### 📜 HISTORIAL RECIENTE")
-                    df_mostrar = df_jugador[["Fecha", "Hora", "Tipo", "Monto", "Detalle", "Saldo_Anterior", "Saldo_Nuevo"]].iloc[::-1].reset_index(drop=True)
-                    
-                    df_mostrar_formateado = df_mostrar.copy()
-                    for col in ["Monto", "Saldo_Anterior", "Saldo_Nuevo"]:
-                        if col in df_mostrar_formateado.columns:
-                            df_mostrar_formateado[col] = df_mostrar_formateado[col].apply(lambda x: f"${x:,.2f}" if pd.notna(x) else "$0.00")
-                    
+                    df_mostrar = df_jugador[["Fecha", "Hora", "Tipo", "Monto", "Detalle"]].iloc[::-1].reset_index(drop=True)
                     st.dataframe(
-                        df_mostrar_formateado,
+                        df_mostrar.style.format({"Monto": "${:,.2f}"}),
                         use_container_width=True,
                         hide_index=True
                     )
@@ -447,7 +340,7 @@ if modo_acceso == "👤 MODO JUGADOR":
                 st.dataframe(
                     ranking_df.style
                     .format({"Victorias": "{:,.0f}"})
-                    .map(color_posicion, subset=['Posición']),
+                    .applymap(color_posicion, subset=['Posición']),
                     use_container_width=True,
                     hide_index=True
                 )
@@ -560,7 +453,7 @@ if modo_acceso == "👤 MODO JUGADOR":
             st.info("Sin registros en la base de datos.")
 
 # ==============================================================================
-# MODO 2: ADMINISTRADOR
+# MODO 2: ADMINISTRADOR (🔑 CON AUTOLIMPIEZA Y SELECTOR INTERACTIVO)
 # ==============================================================================
 else:
     st.markdown("### 🔑 ACCESO ADMINISTRADOR")
@@ -650,7 +543,7 @@ else:
                         st.session_state["ganador_ruleta_hoy"] = ganador_final
                         
                         placeholder.markdown(f"""
-                            <div class="gaming-card" style="border-color: #FFD700; background: linear-gradient(135deg, #1C4429 0%, #111827 100%); padding: 35px; border-width: 3px;">
+                            <div class="gaming-card" style="border-color: #FFD700; background: linear-gradient(135deg, #1C4429 0%, #111827 100%); padding: 35px; border-width: 3px; animation: pulse 1s ease-in-out infinite;">
                                 <div style="font-size: 18px; color: #FFD700; font-weight: 800;">🎉 ¡GANADOR DEL PREMIO EXTRA! 🎉</div>
                                 <div style="font-size: 52px; font-weight: 900; color: #FFFFFF; text-shadow: 0 0 30px #FFD700;">👑 {ganador_final} 👑</div>
                                 <div style="color: #3FB950; font-size: 16px; margin-top: 10px;">🏆 Premio: 3 partidas gratis</div>
@@ -665,37 +558,20 @@ else:
             else:
                 st.warning("⚠️ Aún no hay jugadores con 3 partidas hoy.")
                 st.info("📌 Los jugadores aparecerán aquí cuando completen 3 partidas jugadas.")
-                # --- REGISTRO DE MOVIMIENTOS ---
+        
+        # --- REGISTRO DE MOVIMIENTOS ---
         with st.expander("➕ REGISTRAR NUEVO MOVIMIENTO", expanded=True):
-            
-            if "mostrar_nuevo_jugador" not in st.session_state:
-                st.session_state["mostrar_nuevo_jugador"] = False
             
             with st.form(key="registro_movimiento_form"):
                 
                 st.markdown("### 📝 DATOS DE LA TRANSACCIÓN")
                 
-                mostrar_nuevo = st.checkbox(
-                    "➕ Agregar nuevo jugador", 
-                    value=st.session_state["mostrar_nuevo_jugador"],
-                    key="checkbox_nuevo_jugador"
-                )
-                
-                st.session_state["mostrar_nuevo_jugador"] = mostrar_nuevo
-                
-                if mostrar_nuevo:
-                    cliente_final = st.text_input(
-                        "✏️ Nombre del Nuevo Jugador:", 
-                        placeholder="Ej: Juan Pérez",
-                        key="input_nuevo_jugador"
-                    ).strip()
-                    st.caption(f"📋 Jugadores existentes: {', '.join(clientes_existentes)}")
+                opcion_cliente = st.radio("Cliente:", ["Existente", "➕ Nuevo"], horizontal=True, key="reg_opcion_cliente_form")
+
+                if opcion_cliente == "Existente":
+                    cliente_final = st.selectbox("Seleccionar Jugador:", clientes_existentes, key="reg_cliente_existente_form")
                 else:
-                    cliente_final = st.selectbox(
-                        "👤 Seleccionar Jugador Existente:", 
-                        clientes_existentes,
-                        key="select_jugador_existente"
-                    )
+                    cliente_final = st.text_input("Nombre del Nuevo Jugador:", key="reg_cliente_nuevo_form").strip()
 
                 opciones_tipo = [
                     "🟢 Saldo agregado (+)",
@@ -707,26 +583,11 @@ else:
                 
                 st.info("💡 Para sumar una victoria al ranking, selecciona '🟡 Partida ganada (+)")
                 
-                tipo_movimiento = st.selectbox(
-                    "Tipo de Movimiento:", 
-                    opciones_tipo,
-                    key="select_tipo_movimiento"
-                )
+                tipo_movimiento = st.selectbox("Tipo de Movimiento:", opciones_tipo, key="reg_tipo_mov_form")
                 
-                monto = st.number_input(
-                    "Monto ($):", 
-                    min_value=0.0, 
-                    step=1.0, 
-                    format="%.2f", 
-                    value=0.0,
-                    key="input_monto"
-                )
+                monto = st.number_input("Monto ($):", min_value=0.0, step=1.0, format="%.2f", key="monto_input_form", value=0.0)
 
-                fecha_actual = st.date_input(
-                    "Fecha:", 
-                    datetime.now().date(),
-                    key="input_fecha"
-                )
+                fecha_actual = st.date_input("Fecha:", datetime.now().date(), key="reg_fecha_form")
                 
                 col_h1, col_h2, col_ampm = st.columns([1, 1, 1])
                 hora_now = datetime.now()
@@ -735,35 +596,12 @@ else:
                     h_12_default = 12
                 ampm_default = "PM" if hora_now.hour >= 12 else "AM"
 
-                hora_num = col_h1.number_input(
-                    "Hora (1-12):", 
-                    min_value=1, 
-                    max_value=12, 
-                    value=h_12_default, 
-                    step=1,
-                    key="input_hora"
-                )
-                min_num = col_h2.number_input(
-                    "Min (0-59):", 
-                    min_value=0, 
-                    max_value=59, 
-                    value=hora_now.minute, 
-                    step=1,
-                    key="input_minutos"
-                )
-                ampm = col_ampm.selectbox(
-                    "Período:", 
-                    ["AM", "PM"], 
-                    index=0 if ampm_default == "AM" else 1,
-                    key="select_ampm"
-                )
+                hora_num = col_h1.number_input("Hora (1-12):", min_value=1, max_value=12, value=h_12_default, step=1, key="reg_hora_num_form")
+                min_num = col_h2.number_input("Min (0-59):", min_value=0, max_value=59, value=hora_now.minute, step=1, key="reg_min_num_form")
+                ampm = col_ampm.selectbox("Período:", ["AM", "PM"], index=0 if ampm_default == "AM" else 1, key="reg_ampm_form")
 
                 hora_formateada = f"{hora_num:02d}:{min_num:02d} {ampm}"
-                detalle = st.text_input(
-                    "Observaciones:", 
-                    placeholder="Mesa 1, Nequi, etc.",
-                    key="input_detalle"
-                )
+                detalle = st.text_input("Observaciones:", placeholder="Mesa 1, Nequi, etc.", key="detalle_input_form")
 
                 submit_registro = st.form_submit_button("💾 GUARDAR TRANSACCIÓN", type="primary")
 
@@ -782,9 +620,6 @@ else:
                                 monto,
                                 detalle
                             )
-                            
-                            if mostrar_nuevo:
-                                st.session_state["mostrar_nuevo_jugador"] = False
                             
                             if tipo_movimiento == "🟡 Partida ganada (+)":
                                 st.toast(f"🏆 ¡VICTORIA REGISTRADA! {cliente_final} +1 en el ranking", icon="🏆")
@@ -894,15 +729,8 @@ else:
 
         st.markdown("### 📜 HISTORIAL COMPLETO DE REGISTROS")
         if not df_movimientos.empty:
-            df_historial = df_movimientos.iloc[::-1].reset_index(drop=True)
-            df_historial_formateado = df_historial.copy()
-            
-            for col in ["Monto", "Saldo_Anterior", "Saldo_Nuevo"]:
-                if col in df_historial_formateado.columns:
-                    df_historial_formateado[col] = df_historial_formateado[col].apply(lambda x: f"${x:,.2f}" if pd.notna(x) else "$0.00")
-            
             st.dataframe(
-                df_historial_formateado,
+                df_movimientos.iloc[::-1].reset_index(drop=True).style.format({"Monto": "${:,.2f}"}),
                 use_container_width=True,
                 hide_index=True
             )
