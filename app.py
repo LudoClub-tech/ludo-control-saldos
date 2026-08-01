@@ -126,20 +126,16 @@ def conectar_google_sheets():
 def verificar_y_crear_columnas():
     """Verifica que todas las columnas existan y las crea si faltan"""
     try:
-        # Obtener encabezados actuales
         headers = sheet.row_values(1)
         
-        # Columnas necesarias en el orden correcto
         columnas_esperadas = ["Fecha", "Hora", "Cliente", "Tipo", "Monto", "Detalle", "Saldo_Anterior", "Saldo_Nuevo"]
         
-        # Verificar qué columnas faltan
         columnas_faltantes = []
         for col in columnas_esperadas:
             if col not in headers:
                 columnas_faltantes.append(col)
         
         if columnas_faltantes:
-            # Agregar columnas faltantes
             for col in columnas_faltantes:
                 ultima_columna = len(headers) + 1
                 sheet.add_cols(1)
@@ -172,7 +168,6 @@ def obtener_datos():
     if df.empty:
         df = pd.DataFrame(columns=["Fecha", "Hora", "Cliente", "Tipo", "Monto", "Detalle", "Saldo_Anterior", "Saldo_Nuevo"])
     else:
-        # Asegurar que las columnas existen
         for col in ["Monto", "Saldo_Anterior", "Saldo_Nuevo"]:
             if col not in df.columns:
                 df[col] = 0.0
@@ -182,21 +177,6 @@ def obtener_datos():
         df["Fecha"] = df["Fecha"].astype(str)
     
     return df
-
-def calcular_saldo_anterior(df, cliente, idx_actual):
-    """Calcula el saldo anterior para un movimiento específico"""
-    df_cliente = df[df["Cliente"] == cliente].copy()
-    
-    if idx_actual > 0 and len(df_cliente) > 0:
-        df_anteriores = df_cliente.head(idx_actual)
-        if not df_anteriores.empty:
-            saldo_anterior = 0
-            for _, row in df_anteriores.iterrows():
-                neto = calcular_neto(row)
-                saldo_anterior += neto
-            return saldo_anterior
-    
-    return 0.0
 
 def guardar_movimiento(fecha, hora, cliente, tipo, monto, detalle):
     """Guarda un movimiento con saldo anterior y nuevo"""
@@ -275,6 +255,8 @@ if "ganador_ruleta_hoy" not in st.session_state:
     st.session_state["ganador_ruleta_hoy"] = None
 if "bloqueo_envio_admin" not in st.session_state:
     st.session_state["bloqueo_envio_admin"] = False
+if "contador_keys" not in st.session_state:
+    st.session_state["contador_keys"] = 0
 
 # Cargar datos
 df_movimientos = obtener_datos()
@@ -686,30 +668,31 @@ else:
                 st.warning("⚠️ Aún no hay jugadores con 3 partidas hoy.")
                 st.info("📌 Los jugadores aparecerán aquí cuando completen 3 partidas jugadas.")
         
-               # --- REGISTRO DE MOVIMIENTOS ---
+        # --- REGISTRO DE MOVIMIENTOS (CORREGIDO PARA NUEVOS JUGADORES) ---
         with st.expander("➕ REGISTRAR NUEVO MOVIMIENTO", expanded=True):
             
             with st.form(key="registro_movimiento_form"):
                 
                 st.markdown("### 📝 DATOS DE LA TRANSACCIÓN")
                 
+                # Usar un radio button para seleccionar entre existente o nuevo
                 opcion_cliente = st.radio(
                     "Cliente:", 
                     ["Existente", "➕ Nuevo"], 
                     horizontal=True, 
-                    key="reg_opcion_cliente_form"
+                    key=f"reg_opcion_cliente_{st.session_state['contador_keys']}"
                 )
 
                 if opcion_cliente == "Existente":
                     cliente_final = st.selectbox(
                         "Seleccionar Jugador:", 
                         clientes_existentes, 
-                        key="reg_cliente_existente_form_" + str(random.randint(0, 1000))
+                        key=f"reg_cliente_existente_{st.session_state['contador_keys']}"
                     )
                 else:
                     cliente_final = st.text_input(
                         "Nombre del Nuevo Jugador:", 
-                        key="reg_cliente_nuevo_form_" + str(random.randint(0, 1000)),
+                        key=f"reg_cliente_nuevo_{st.session_state['contador_keys']}",
                         placeholder="Ej: Juan Pérez"
                     ).strip()
 
@@ -723,11 +706,26 @@ else:
                 
                 st.info("💡 Para sumar una victoria al ranking, selecciona '🟡 Partida ganada (+)")
                 
-                tipo_movimiento = st.selectbox("Tipo de Movimiento:", opciones_tipo, key="reg_tipo_mov_form")
+                tipo_movimiento = st.selectbox(
+                    "Tipo de Movimiento:", 
+                    opciones_tipo, 
+                    key=f"reg_tipo_mov_{st.session_state['contador_keys']}"
+                )
                 
-                monto = st.number_input("Monto ($):", min_value=0.0, step=1.0, format="%.2f", key="monto_input_form", value=0.0)
+                monto = st.number_input(
+                    "Monto ($):", 
+                    min_value=0.0, 
+                    step=1.0, 
+                    format="%.2f", 
+                    key=f"monto_input_{st.session_state['contador_keys']}", 
+                    value=0.0
+                )
 
-                fecha_actual = st.date_input("Fecha:", datetime.now().date(), key="reg_fecha_form")
+                fecha_actual = st.date_input(
+                    "Fecha:", 
+                    datetime.now().date(), 
+                    key=f"reg_fecha_{st.session_state['contador_keys']}"
+                )
                 
                 col_h1, col_h2, col_ampm = st.columns([1, 1, 1])
                 hora_now = datetime.now()
@@ -736,12 +734,35 @@ else:
                     h_12_default = 12
                 ampm_default = "PM" if hora_now.hour >= 12 else "AM"
 
-                hora_num = col_h1.number_input("Hora (1-12):", min_value=1, max_value=12, value=h_12_default, step=1, key="reg_hora_num_form")
-                min_num = col_h2.number_input("Min (0-59):", min_value=0, max_value=59, value=hora_now.minute, step=1, key="reg_min_num_form")
-                ampm = col_ampm.selectbox("Período:", ["AM", "PM"], index=0 if ampm_default == "AM" else 1, key="reg_ampm_form")
+                hora_num = col_h1.number_input(
+                    "Hora (1-12):", 
+                    min_value=1, 
+                    max_value=12, 
+                    value=h_12_default, 
+                    step=1, 
+                    key=f"reg_hora_num_{st.session_state['contador_keys']}"
+                )
+                min_num = col_h2.number_input(
+                    "Min (0-59):", 
+                    min_value=0, 
+                    max_value=59, 
+                    value=hora_now.minute, 
+                    step=1, 
+                    key=f"reg_min_num_{st.session_state['contador_keys']}"
+                )
+                ampm = col_ampm.selectbox(
+                    "Período:", 
+                    ["AM", "PM"], 
+                    index=0 if ampm_default == "AM" else 1, 
+                    key=f"reg_ampm_{st.session_state['contador_keys']}"
+                )
 
                 hora_formateada = f"{hora_num:02d}:{min_num:02d} {ampm}"
-                detalle = st.text_input("Observaciones:", placeholder="Mesa 1, Nequi, etc.", key="detalle_input_form")
+                detalle = st.text_input(
+                    "Observaciones:", 
+                    placeholder="Mesa 1, Nequi, etc.", 
+                    key=f"detalle_input_{st.session_state['contador_keys']}"
+                )
 
                 submit_registro = st.form_submit_button("💾 GUARDAR TRANSACCIÓN", type="primary")
 
@@ -761,6 +782,9 @@ else:
                                 detalle
                             )
                             
+                            # Incrementar contador para regenerar keys
+                            st.session_state["contador_keys"] += 1
+                            
                             if tipo_movimiento == "🟡 Partida ganada (+)":
                                 st.toast(f"🏆 ¡VICTORIA REGISTRADA! {cliente_final} +1 en el ranking", icon="🏆")
                             else:
@@ -768,6 +792,7 @@ else:
                             
                             time.sleep(0.5)
                             st.rerun()
+
         # --- MÓDULO DE EDICIÓN DE MOVIMIENTOS ---
         with st.expander("✏️ EDITAR O CORREGIR MOVIMIENTO", expanded=False):
             if not df_movimientos.empty:
