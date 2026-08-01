@@ -666,27 +666,40 @@ else:
                 st.warning("⚠️ Aún no hay jugadores con 3 partidas hoy.")
                 st.info("📌 Los jugadores aparecerán aquí cuando completen 3 partidas jugadas.")
         
-               # --- REGISTRO DE MOVIMIENTOS ---
+                      # --- REGISTRO DE MOVIMIENTOS ---
         with st.expander("➕ REGISTRAR NUEVO MOVIMIENTO", expanded=True):
             
+            # Inicializar session_state para controlar la visibilidad
+            if "mostrar_nuevo" not in st.session_state:
+                st.session_state["mostrar_nuevo"] = False
+            
+            # Botones fuera del formulario para controlar la visibilidad
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("👤 Jugador Existente", use_container_width=True, key="btn_existente"):
+                    st.session_state["mostrar_nuevo"] = False
+                    st.rerun()
+            with col2:
+                if st.button("➕ Nuevo Jugador", use_container_width=True, key="btn_nuevo"):
+                    st.session_state["mostrar_nuevo"] = True
+                    st.rerun()
+            
+            st.markdown("---")
+            
+            # Formulario principal
             with st.form(key="registro_movimiento_form"):
                 
                 st.markdown("### 📝 DATOS DE LA TRANSACCIÓN")
                 
-                tipo_cliente = st.radio(
-                    "Selecciona el tipo de cliente:",
-                    ["👤 Jugador Existente", "➕ Nuevo Jugador"],
-                    horizontal=True,
-                    key="tipo_cliente_radio"
-                )
-                
-                if tipo_cliente == "➕ Nuevo Jugador":
+                # Mostrar el campo correspondiente según el estado
+                if st.session_state["mostrar_nuevo"]:
                     cliente_final = st.text_input(
                         "✏️ Escribe el nombre del nuevo jugador:",
                         placeholder="Ej: Juan Pérez",
                         key="nuevo_jugador_input"
                     ).strip()
                     
+                    # Mostrar referencia de existentes
                     if clientes_existentes:
                         st.caption(f"💡 Jugadores existentes: {', '.join(clientes_existentes[:5])}" + 
                                   (f" y {len(clientes_existentes)-5} más..." if len(clientes_existentes) > 5 else ""))
@@ -768,6 +781,7 @@ else:
                 submit_registro = st.form_submit_button("💾 GUARDAR TRANSACCIÓN", type="primary")
 
                 if submit_registro:
+                    # Validaciones
                     if not cliente_final:
                         st.error("❌ Debes indicar el nombre del jugador.")
                     elif monto <= 0:
@@ -782,6 +796,10 @@ else:
                                 monto,
                                 detalle
                             )
+                            
+                            # Si se agregó nuevo jugador, resetear el estado
+                            if st.session_state["mostrar_nuevo"]:
+                                st.session_state["mostrar_nuevo"] = False
                             
                             if tipo_movimiento == "🟡 Partida ganada (+)":
                                 st.toast(f"🏆 ¡VICTORIA REGISTRADA! {cliente_final} +1 en el ranking", icon="🏆")
