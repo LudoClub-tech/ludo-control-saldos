@@ -255,8 +255,6 @@ if "ganador_ruleta_hoy" not in st.session_state:
     st.session_state["ganador_ruleta_hoy"] = None
 if "bloqueo_envio_admin" not in st.session_state:
     st.session_state["bloqueo_envio_admin"] = False
-if "contador_keys" not in st.session_state:
-    st.session_state["contador_keys"] = 0
 
 # Cargar datos
 df_movimientos = obtener_datos()
@@ -668,33 +666,30 @@ else:
                 st.warning("⚠️ Aún no hay jugadores con 3 partidas hoy.")
                 st.info("📌 Los jugadores aparecerán aquí cuando completen 3 partidas jugadas.")
         
-        # --- REGISTRO DE MOVIMIENTOS (CORREGIDO PARA NUEVOS JUGADORES) ---
+        # --- REGISTRO DE MOVIMIENTOS (CORREGIDO CON CHECKBOX) ---
         with st.expander("➕ REGISTRAR NUEVO MOVIMIENTO", expanded=True):
             
             with st.form(key="registro_movimiento_form"):
                 
                 st.markdown("### 📝 DATOS DE LA TRANSACCIÓN")
                 
-                # Usar un radio button para seleccionar entre existente o nuevo
-                opcion_cliente = st.radio(
-                    "Cliente:", 
-                    ["Existente", "➕ Nuevo"], 
-                    horizontal=True, 
-                    key=f"reg_opcion_cliente_{st.session_state['contador_keys']}"
-                )
-
-                if opcion_cliente == "Existente":
-                    cliente_final = st.selectbox(
-                        "Seleccionar Jugador:", 
-                        clientes_existentes, 
-                        key=f"reg_cliente_existente_{st.session_state['contador_keys']}"
-                    )
-                else:
+                # Usar checkbox para controlar si es nuevo jugador
+                es_nuevo = st.checkbox("➕ Agregar nuevo jugador", value=False)
+                
+                if es_nuevo:
                     cliente_final = st.text_input(
                         "Nombre del Nuevo Jugador:", 
-                        key=f"reg_cliente_nuevo_{st.session_state['contador_keys']}",
                         placeholder="Ej: Juan Pérez"
                     ).strip()
+                    
+                    # Mostrar lista de existentes para referencia
+                    with st.expander("📋 Ver jugadores existentes", expanded=False):
+                        st.write(", ".join(clientes_existentes))
+                else:
+                    cliente_final = st.selectbox(
+                        "Seleccionar Jugador Existente:", 
+                        clientes_existentes
+                    )
 
                 opciones_tipo = [
                     "🟢 Saldo agregado (+)",
@@ -706,26 +701,17 @@ else:
                 
                 st.info("💡 Para sumar una victoria al ranking, selecciona '🟡 Partida ganada (+)")
                 
-                tipo_movimiento = st.selectbox(
-                    "Tipo de Movimiento:", 
-                    opciones_tipo, 
-                    key=f"reg_tipo_mov_{st.session_state['contador_keys']}"
-                )
+                tipo_movimiento = st.selectbox("Tipo de Movimiento:", opciones_tipo)
                 
                 monto = st.number_input(
                     "Monto ($):", 
                     min_value=0.0, 
                     step=1.0, 
                     format="%.2f", 
-                    key=f"monto_input_{st.session_state['contador_keys']}", 
                     value=0.0
                 )
 
-                fecha_actual = st.date_input(
-                    "Fecha:", 
-                    datetime.now().date(), 
-                    key=f"reg_fecha_{st.session_state['contador_keys']}"
-                )
+                fecha_actual = st.date_input("Fecha:", datetime.now().date())
                 
                 col_h1, col_h2, col_ampm = st.columns([1, 1, 1])
                 hora_now = datetime.now()
@@ -739,29 +725,25 @@ else:
                     min_value=1, 
                     max_value=12, 
                     value=h_12_default, 
-                    step=1, 
-                    key=f"reg_hora_num_{st.session_state['contador_keys']}"
+                    step=1
                 )
                 min_num = col_h2.number_input(
                     "Min (0-59):", 
                     min_value=0, 
                     max_value=59, 
                     value=hora_now.minute, 
-                    step=1, 
-                    key=f"reg_min_num_{st.session_state['contador_keys']}"
+                    step=1
                 )
                 ampm = col_ampm.selectbox(
                     "Período:", 
                     ["AM", "PM"], 
-                    index=0 if ampm_default == "AM" else 1, 
-                    key=f"reg_ampm_{st.session_state['contador_keys']}"
+                    index=0 if ampm_default == "AM" else 1
                 )
 
                 hora_formateada = f"{hora_num:02d}:{min_num:02d} {ampm}"
                 detalle = st.text_input(
                     "Observaciones:", 
-                    placeholder="Mesa 1, Nequi, etc.", 
-                    key=f"detalle_input_{st.session_state['contador_keys']}"
+                    placeholder="Mesa 1, Nequi, etc."
                 )
 
                 submit_registro = st.form_submit_button("💾 GUARDAR TRANSACCIÓN", type="primary")
@@ -781,9 +763,6 @@ else:
                                 monto,
                                 detalle
                             )
-                            
-                            # Incrementar contador para regenerar keys
-                            st.session_state["contador_keys"] += 1
                             
                             if tipo_movimiento == "🟡 Partida ganada (+)":
                                 st.toast(f"🏆 ¡VICTORIA REGISTRADA! {cliente_final} +1 en el ranking", icon="🏆")
