@@ -693,13 +693,25 @@ else:
                 
                 st.markdown("### 📝 DATOS DE LA TRANSACCIÓN")
                 
-                opcion_cliente = st.radio("Cliente:", ["Existente", "➕ Nuevo"], horizontal=True, key="reg_opcion_cliente_form")
+               opcion_cliente = st.radio(
+    "Cliente:", 
+    ["Existente", "➕ Nuevo"], 
+    horizontal=True, 
+    key="reg_opcion_cliente_form"
+)
 
-                if opcion_cliente == "Existente":
-                    cliente_final = st.selectbox("Seleccionar Jugador:", clientes_existentes, key="reg_cliente_existente_form")
-                else:
-                    cliente_final = st.text_input("Nombre del Nuevo Jugador:", key="reg_cliente_nuevo_form").strip()
-
+if opcion_cliente == "Existente":
+    cliente_final = st.selectbox(
+        "Seleccionar Jugador:", 
+        clientes_existentes, 
+        key="reg_cliente_existente_form_" + str(random.randint(0, 1000))  # ← Key ÚNICA
+    )
+else:
+    cliente_final = st.text_input(
+        "Nombre del Nuevo Jugador:", 
+        key="reg_cliente_nuevo_form_" + str(random.randint(0, 1000)),  # ← Key ÚNICA
+        placeholder="Ej: Juan Pérez"
+    ).strip()
                 opciones_tipo = [
                     "🟢 Saldo agregado (+)",
                     "🔴 Partida jugada (-)",
