@@ -461,7 +461,7 @@ if modo_acceso == "👤 MODO JUGADOR":
                 st.dataframe(
                     ranking_df.style
                     .format({"Victorias": "{:,.0f}"})
-                    .applymap(color_posicion, subset=['Posición']),
+                    .map(color_posicion, subset=['Posición'])
                     use_container_width=True,
                     hide_index=True
                 )
