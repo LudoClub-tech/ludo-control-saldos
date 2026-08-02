@@ -365,10 +365,15 @@ if modo_acceso == "👤 MODO JUGADOR":
         else:
             st.info("Sin registros en la base de datos.")
 
-    # --- TAB 2: RANKING ---
+       # --- TAB 2: RANKING ---
     with tab_ranking:
         st.markdown("### 🏆 RANKING DE JUGADORES")
         st.caption("📊 Las victorias se suman automáticamente al registrar '🟡 Partida ganada (+)'")
+        
+        # Usar zona horaria de Colombia para el ranking del día
+        zona_colombia = pytz.timezone('America/Bogota')
+        ahora_colombia = datetime.now(zona_colombia)
+        fecha_hoy_str = ahora_colombia.strftime("%Y-%m-%d")
         
         filtro_rango = st.radio(
             "📅 Período:", 
@@ -487,7 +492,6 @@ if modo_acceso == "👤 MODO JUGADOR":
                     st.info("💡 Aún no hay victorias en el historial general.")
         else:
             st.info("📭 Sin registros en la base de datos.")
-
         # --- TAB 3: RULETA DIARIA (VISTA JUGADOR) ---
     with tab_ruleta:
         st.markdown("### 🎡 SORTEO DE RULETA DIARIA")
