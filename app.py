@@ -6,6 +6,7 @@ from datetime import datetime
 import os
 import random
 import time
+import pytz
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -487,13 +488,18 @@ if modo_acceso == "👤 MODO JUGADOR":
         else:
             st.info("📭 Sin registros en la base de datos.")
 
-    # --- TAB 3: RULETA DIARIA (VISTA JUGADOR) ---
+        # --- TAB 3: RULETA DIARIA (VISTA JUGADOR) ---
     with tab_ruleta:
         st.markdown("### 🎡 SORTEO DE RULETA DIARIA")
         st.caption("🎯 Los jugadores con 3 o más partidas jugadas hoy participan automáticamente")
         
-        hora_actual = datetime.now().strftime("%I:%M %p")
-        st.info(f"🕐 Hora actual: {hora_actual} | Fecha: {fecha_hoy_str}")
+        # Usar zona horaria de Colombia (UTC-5)
+        zona_colombia = pytz.timezone('America/Bogota')
+        ahora_colombia = datetime.now(zona_colombia)
+        fecha_hoy_str = ahora_colombia.strftime("%Y-%m-%d")
+        hora_actual_str = ahora_colombia.strftime("%I:%M %p")
+        
+        st.info(f"🕐 Hora actual (Colombia): {hora_actual_str} | Fecha: {fecha_hoy_str}")
 
         if not df_movimientos.empty:
             df_jugadas_hoy = df_movimientos[
@@ -571,11 +577,16 @@ else:
     if password == CLAVE_ADMIN:
         st.success("✅ Modo Administrador Activo")
 
-        # --- SECCIÓN EXCLUSIVA DE GESTIÓN DE RULETA ---
+                # --- SECCIÓN EXCLUSIVA DE GESTIÓN DE RULETA ---
         with st.expander("🎡 CONTROL DE RULETA DIARIA (EXCLUSIVO ADMIN)", expanded=True):
             
-            hora_actual = datetime.now().strftime("%I:%M %p")
-            st.info(f"🕐 Hora actual: {hora_actual} | Fecha: {fecha_hoy_str}")
+            # Usar zona horaria de Colombia (UTC-5)
+            zona_colombia = pytz.timezone('America/Bogota')
+            ahora_colombia = datetime.now(zona_colombia)
+            fecha_hoy_str = ahora_colombia.strftime("%Y-%m-%d")
+            hora_actual_str = ahora_colombia.strftime("%I:%M %p")
+            
+            st.info(f"🕐 Hora actual (Colombia): {hora_actual_str} | Fecha: {fecha_hoy_str}")
             
             df_jugadas_hoy = df_movimientos[
                 (df_movimientos["Fecha"] == fecha_hoy_str) & 
