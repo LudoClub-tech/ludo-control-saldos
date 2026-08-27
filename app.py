@@ -574,7 +574,7 @@ if modo_acceso == "👤 MODO JUGADOR":
 # ==============================================================================
 else:
     st.markdown("### 🔑 ACCESO ADMINISTRADOR")
-    CLAVE_ADMIN = "ludo21010227" 
+    CLAVE_ADMIN = "ludo22927613" 
     
     password = st.text_input("Ingresa la contraseña de gestión:", type="password")
 
