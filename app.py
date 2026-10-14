@@ -2,7 +2,7 @@ import streamlit as st
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import random
 import time
@@ -125,16 +125,10 @@ def conectar_google_sheets():
     return sheet
 
 def verificar_y_crear_columnas():
-    """Verifica que todas las columnas existan y las crea si faltan"""
     try:
         headers = sheet.row_values(1)
-        
         columnas_esperadas = ["Fecha", "Hora", "Cliente", "Tipo", "Monto", "Detalle", "Saldo_Anterior", "Saldo_Nuevo"]
-        
-        columnas_faltantes = []
-        for col in columnas_esperadas:
-            if col not in headers:
-                columnas_faltantes.append(col)
+        columnas_faltantes = [col for col in columnas_esperadas if col not in headers]
         
         if columnas_faltantes:
             for col in columnas_faltantes:
@@ -147,7 +141,6 @@ def verificar_y_crear_columnas():
             st.info("🔄 La página se recargará para aplicar los cambios...")
             time.sleep(2)
             st.rerun()
-        
         return True
     except Exception as e:
         st.error(f"⚠️ Error al verificar columnas: {e}")
@@ -162,7 +155,6 @@ except Exception as e:
 
 # --- FUNCIONES DE APOYO ---
 def obtener_datos():
-    """Obtiene todos los datos de Google Sheets"""
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
     
@@ -174,15 +166,12 @@ def obtener_datos():
                 df[col] = 0.0
             else:
                 df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-        
         df["Fecha"] = df["Fecha"].astype(str)
     
     return df
 
 def guardar_movimiento(fecha, hora, cliente, tipo, monto, detalle):
-    """Guarda un movimiento con saldo anterior y nuevo"""
     df = obtener_datos()
-    
     df_cliente = df[df["Cliente"] == cliente].copy()
     
     saldo_anterior = 0.0
@@ -199,21 +188,13 @@ def guardar_movimiento(fecha, hora, cliente, tipo, monto, detalle):
     saldo_nuevo = saldo_anterior + neto
     
     sheet.append_row([
-        str(fecha), 
-        str(hora), 
-        cliente, 
-        tipo, 
-        float(monto), 
-        detalle,
-        float(saldo_anterior),
-        float(saldo_nuevo)
+        str(fecha), str(hora), cliente, tipo, float(monto), detalle,
+        float(saldo_anterior), float(saldo_nuevo)
     ])
 
 def actualizar_movimiento(fila_sheets, fecha, hora, cliente, tipo, monto, detalle):
-    """Actualiza un movimiento recalculando saldos anteriores y nuevos"""
     df = obtener_datos()
     idx_real = fila_sheets - 2
-    
     df_cliente = df[df["Cliente"] == cliente].copy()
     
     saldo_anterior = 0.0
@@ -228,18 +209,8 @@ def actualizar_movimiento(fila_sheets, fecha, hora, cliente, tipo, monto, detall
         neto = -monto
     
     saldo_nuevo = saldo_anterior + neto
-    
     rango = f"A{fila_sheets}:H{fila_sheets}"
-    valores = [[
-        str(fecha), 
-        str(hora), 
-        cliente, 
-        tipo, 
-        float(monto), 
-        detalle,
-        float(saldo_anterior),
-        float(saldo_nuevo)
-    ]]
+    valores = [[str(fecha), str(hora), cliente, tipo, float(monto), detalle, float(saldo_anterior), float(saldo_nuevo)]]
     sheet.update(rango, valores)
 
 def calcular_neto(row):
@@ -252,11 +223,10 @@ def calcular_neto(row):
     return 0
 
 # ==============================================================================
-# FUNCIONES PARA RANKING MEJORADO
+# FUNCIONES PARA RANKING
 # ==============================================================================
 
 def calcular_nivel(victorias_totales):
-    """Calcula el nivel según las victorias totales"""
     if victorias_totales >= 200:
         return "👑 DIAMANTE"
     elif victorias_totales >= 100:
@@ -270,56 +240,52 @@ def calcular_nivel(victorias_totales):
     else:
         return "🔰 NOVATO"
 
+def obtener_semana_actual():
+    zona_colombia = pytz.timezone('America/Bogota')
+    ahora = datetime.now(zona_colombia)
+    hoy = ahora.date()
+    inicio_semana = hoy - timedelta(days=hoy.weekday())
+    fin_semana = inicio_semana + timedelta(days=6)
+    return inicio_semana.strftime("%Y-%m-%d"), fin_semana.strftime("%Y-%m-%d")
+
+def obtener_ranking_semana(df_movimientos):
+    inicio, fin = obtener_semana_actual()
+    df_victorias = df_movimientos[
+        (df_movimientos["Fecha"] >= inicio) &
+        (df_movimientos["Fecha"] <= fin) &
+        (df_movimientos["Tipo"] == "🟡 Partida ganada (+)")
+    ]
+    if df_victorias.empty:
+        return pd.DataFrame(columns=["Posición", "Cliente", "Victorias"])
+    ranking = df_victorias.groupby("Cliente").size().reset_index(name="Victorias")
+    ranking = ranking.sort_values(by="Victorias", ascending=False).reset_index(drop=True)
+    ranking.insert(0, "Posición", range(1, len(ranking) + 1))
+    return ranking
+
 def obtener_ranking_dia(fecha_hoy, df_movimientos):
-    """Obtiene el ranking de victorias del día"""
     df_victorias = df_movimientos[
         (df_movimientos["Fecha"] == fecha_hoy) & 
         (df_movimientos["Tipo"] == "🟡 Partida ganada (+)")
     ]
-    
     if df_victorias.empty:
         return pd.DataFrame(columns=["Posición", "Cliente", "Victorias"])
-    
     ranking = df_victorias.groupby("Cliente").size().reset_index(name="Victorias")
     ranking = ranking.sort_values(by="Victorias", ascending=False).reset_index(drop=True)
     ranking.insert(0, "Posición", range(1, len(ranking) + 1))
-    
-    return ranking
-
-def obtener_ranking_mes(month_key, df_movimientos):
-    """Obtiene el ranking de victorias del mes"""
-    df_victorias = df_movimientos[
-        (df_movimientos["Fecha"].str.startswith(month_key)) & 
-        (df_movimientos["Tipo"] == "🟡 Partida ganada (+)")
-    ]
-    
-    if df_victorias.empty:
-        return pd.DataFrame(columns=["Posición", "Cliente", "Victorias"])
-    
-    ranking = df_victorias.groupby("Cliente").size().reset_index(name="Victorias")
-    ranking = ranking.sort_values(by="Victorias", ascending=False).reset_index(drop=True)
-    ranking.insert(0, "Posición", range(1, len(ranking) + 1))
-    
     return ranking
 
 def obtener_ranking_global(df_movimientos):
-    """Obtiene el ranking global de victorias (histórico)"""
     df_victorias = df_movimientos[df_movimientos["Tipo"] == "🟡 Partida ganada (+)"]
-    
     if df_victorias.empty:
         return pd.DataFrame(columns=["Posición", "Cliente", "Victorias"])
-    
     ranking = df_victorias.groupby("Cliente").size().reset_index(name="Victorias")
     ranking = ranking.sort_values(by="Victorias", ascending=False).reset_index(drop=True)
     ranking.insert(0, "Posición", range(1, len(ranking) + 1))
-    
     return ranking
 
 def obtener_estadisticas_ranking(ranking_df):
-    """Calcula estadísticas del ranking"""
     if ranking_df.empty:
         return {"total_jugadores": 0, "total_victorias": 0, "promedio": 0, "max_victorias": 0}
-    
     total_victorias = ranking_df["Victorias"].sum()
     return {
         "total_jugadores": len(ranking_df),
@@ -328,66 +294,56 @@ def obtener_estadisticas_ranking(ranking_df):
         "max_victorias": ranking_df["Victorias"].max()
     }
 
-def guardar_ganador_mes(month_key, ranking_df):
-    """Guarda el ganador del mes en una hoja de Excel"""
+def guardar_ganador_semana(semana_key, ranking_df):
     try:
         if ranking_df.empty:
             return False, "No hay datos para guardar"
-        
         ganador = ranking_df.iloc[0]["Cliente"]
         victorias = ranking_df.iloc[0]["Victorias"]
         
         try:
-            sheet_meses = client.open("Ludo_Control_Saldos").worksheet("Ganadores_Mensuales")
+            sheet_semanas = client.open("Ludo_Control_Saldos").worksheet("Ganadores_Semanales")
         except:
-            sheet_meses = client.open("Ludo_Control_Saldos").add_worksheet("Ganadores_Mensuales", rows=100, cols=10)
-            sheet_meses.append_row(["Mes", "Ganador", "Victorias", "Segundo", "Tercero"])
+            sheet_semanas = client.open("Ludo_Control_Saldos").add_worksheet("Ganadores_Semanales", rows=100, cols=10)
+            sheet_semanas.append_row(["Semana", "Ganador", "Victorias", "Segundo", "Tercero"])
         
         segundo = ranking_df.iloc[1]["Cliente"] if len(ranking_df) >= 2 else "-"
         tercero = ranking_df.iloc[2]["Cliente"] if len(ranking_df) >= 3 else "-"
         
-        datos = sheet_meses.get_all_records()
+        datos = sheet_semanas.get_all_records()
         df_existente = pd.DataFrame(datos)
         if not df_existente.empty:
-            existe = df_existente[df_existente["Mes"] == month_key]
+            existe = df_existente[df_existente["Semana"] == semana_key]
             if not existe.empty:
                 fila = existe.index[0] + 2
-                sheet_meses.update_cell(fila, 2, ganador)
-                sheet_meses.update_cell(fila, 3, victorias)
-                sheet_meses.update_cell(fila, 4, segundo)
-                sheet_meses.update_cell(fila, 5, tercero)
-                return True, f"✅ Ganador del mes {month_key} actualizado: {ganador}"
+                sheet_semanas.update_cell(fila, 2, ganador)
+                sheet_semanas.update_cell(fila, 3, victorias)
+                sheet_semanas.update_cell(fila, 4, segundo)
+                sheet_semanas.update_cell(fila, 5, tercero)
+                return True, f"✅ Ganador de la semana actualizado: {ganador}"
         
-        sheet_meses.append_row([month_key, ganador, victorias, segundo, tercero])
-        return True, f"✅ Ganador del mes {month_key} guardado: {ganador}"
-        
+        sheet_semanas.append_row([semana_key, ganador, victorias, segundo, tercero])
+        return True, f"✅ Ganador de la semana guardado: {ganador}"
     except Exception as e:
-        return False, f"❌ Error al guardar ganador del mes: {e}"
+        return False, f"❌ Error al guardar ganador semanal: {e}"
 
-def resetear_ranking_mes(month_key, sheet):
-    """Reinicia el ranking del mes eliminando SOLO las victorias del mes actual"""
+def resetear_ranking_semana(sheet):
     try:
+        inicio, fin = obtener_semana_actual()
         df = obtener_datos()
-        
-        df_victorias_mes = df[
-            (df["Fecha"].str.startswith(month_key)) & 
+        df_victorias_semana = df[
+            (df["Fecha"] >= inicio) &
+            (df["Fecha"] <= fin) &
             (df["Tipo"] == "🟡 Partida ganada (+)")
         ]
-        
-        if df_victorias_mes.empty:
-            return False, f"No hay victorias en el mes {month_key} para reiniciar."
-        
-        filas = []
-        for idx in df_victorias_mes.index:
-            filas.append(idx + 2)
-        
+        if df_victorias_semana.empty:
+            return False, "No hay victorias en la semana para reiniciar."
+        filas = [idx + 2 for idx in df_victorias_semana.index]
         for fila in sorted(filas, reverse=True):
             sheet.delete_rows(fila)
-        
-        return True, f"✅ Ranking del mes {month_key} reiniciado. Se eliminaron {len(filas)} victorias."
-        
+        return True, f"✅ Ranking semanal reiniciado. Se eliminaron {len(filas)} victorias."
     except Exception as e:
-        return False, f"❌ Error al reiniciar ranking del mes: {e}"
+        return False, f"❌ Error al reiniciar ranking semanal: {e}"
 
 # --- INICIALIZACIÓN DE ESTADO DE SESIÓN ---
 if "ganador_ruleta_hoy" not in st.session_state:
@@ -402,11 +358,11 @@ df_movimientos = obtener_datos()
 clientes_base = ["Dani", "Mis amores", "Wis", "Wilson"]
 clientes_existentes = sorted(list(set(clientes_base + df_movimientos["Cliente"].dropna().unique().tolist())))
 
-# Zona horaria de Colombia
 zona_colombia = pytz.timezone('America/Bogota')
 ahora_colombia = datetime.now(zona_colombia)
 fecha_hoy_str = ahora_colombia.strftime("%Y-%m-%d")
-mes_actual = ahora_colombia.strftime("%Y-%m")
+inicio_semana_str, fin_semana_str = obtener_semana_actual()
+semana_key = f"{inicio_semana_str}_a_{fin_semana_str}"
 
 # --- ENCABEZADO GAMING ---
 st.markdown("""
@@ -507,11 +463,7 @@ if modo_acceso == "👤 MODO JUGADOR":
                         if col in df_mostrar_formateado.columns:
                             df_mostrar_formateado[col] = df_mostrar_formateado[col].apply(lambda x: f"${x:,.2f}" if pd.notna(x) else "$0.00")
                     
-                    st.dataframe(
-                        df_mostrar_formateado,
-                        use_container_width=True,
-                        hide_index=True
-                    )
+                    st.dataframe(df_mostrar_formateado, use_container_width=True, hide_index=True)
                 else:
                     st.info(f"Hola {jugador_seleccionado}, aún no registras movimientos.")
         else:
@@ -524,7 +476,7 @@ if modo_acceso == "👤 MODO JUGADOR":
         
         filtro_rango = st.radio(
             "📅 Período:", 
-            ["🏆 Ranking del Día", "🏆 Ranking del Mes", "👑 Ranking Global", "📊 Ganadores Mensuales"], 
+            ["🏆 Ranking Semanal", "🏆 Ranking del Día", "👑 Ranking Global", "📊 Ganadores Semanales"], 
             horizontal=True,
             index=0,
             key="ranking_periodo"
@@ -533,15 +485,14 @@ if modo_acceso == "👤 MODO JUGADOR":
         st.markdown("---")
         
         # ============================================================
-        # RANKING DEL DÍA
+        # RANKING SEMANAL
         # ============================================================
-        if filtro_rango == "🏆 Ranking del Día":
-            ranking_df = obtener_ranking_dia(fecha_hoy_str, df_movimientos)
-            titulo = f"🏆 RANKING DEL DÍA ({fecha_hoy_str})"
-            subtitulo = "🔥 ¿Quién ganó más partidas HOY?"
+        if filtro_rango == "🏆 Ranking Semanal":
+            ranking_df = obtener_ranking_semana(df_movimientos)
             
-            st.markdown(f"### {titulo}")
-            st.caption(subtitulo)
+            st.markdown(f"### 🏆 RANKING SEMANAL")
+            st.caption(f"📅 Del {inicio_semana_str} al {fin_semana_str}")
+            st.info(f"📅 El ranking se reinicia automáticamente el DOMINGO a las 11:59 PM.")
             
             if not ranking_df.empty:
                 stats = obtener_estadisticas_ranking(ranking_df)
@@ -557,7 +508,7 @@ if modo_acceso == "👤 MODO JUGADOR":
                     st.metric("🔥 Máximo", stats["max_victorias"])
                 
                 st.markdown("---")
-                st.markdown("### 🥇 PODIO DE CAMPEONES DEL DÍA")
+                st.markdown("### 🥇 PODIO DE CAMPEONES DE LA SEMANA")
                 
                 col_p1, col_p2, col_p3 = st.columns(3)
                 
@@ -565,13 +516,13 @@ if modo_acceso == "👤 MODO JUGADOR":
                     with col_p1:
                         nivel1 = calcular_nivel(ranking_df.iloc[0]["Victorias"])
                         st.markdown(f"""
-                            <div class="gaming-card" style="border-color: #FFD700; border-width: 3px;">
+                            <div class="gaming-card" style="border-color: #FFD700; border-width: 3px; background: linear-gradient(135deg, #1C1C00 0%, #2D2D00 100%);">
                                 <div style="font-size: 50px;">🥇</div>
                                 <div style="font-weight: 900; font-size: 22px; color: #FFD700;">{ranking_df.iloc[0]['Cliente']}</div>
                                 <div style="color: #FFD700; font-size: 14px; font-weight: 700;">{nivel1}</div>
                                 <div style="color: #FFD700; font-size: 32px; font-weight: 900;">{ranking_df.iloc[0]['Victorias']}</div>
                                 <div style="color: #8B949E; font-size: 13px;">Victorias</div>
-                                <div style="color: #FFD700; font-size: 12px; margin-top: 5px;">👑 CAMPEÓN DEL DÍA</div>
+                                <div style="color: #FFD700; font-size: 12px; margin-top: 5px;">👑 CAMPEÓN DE LA SEMANA</div>
                             </div>
                         """, unsafe_allow_html=True)
                 
@@ -601,9 +552,9 @@ if modo_acceso == "👤 MODO JUGADOR":
                             </div>
                         """, unsafe_allow_html=True)
                 
-                st.markdown("### 📊 TABLA DE POSICIONES DEL DÍA")
+                st.markdown("### 📊 TABLA DE POSICIONES DE LA SEMANA")
                 
-                def color_fila(row):
+                def color_fila_semana(row):
                     if row["Posición"] == 1:
                         return ['background-color: #FFD700; color: #000000; font-weight: bold;'] * len(row)
                     elif row["Posición"] == 2:
@@ -613,26 +564,19 @@ if modo_acceso == "👤 MODO JUGADOR":
                     else:
                         return [''] * len(row)
                 
-                st.dataframe(
-                    ranking_df.style.apply(color_fila, axis=1),
-                    use_container_width=True,
-                    hide_index=True
-                )
+                st.dataframe(ranking_df.style.apply(color_fila_semana, axis=1), use_container_width=True, hide_index=True)
             else:
-                st.info("📭 No hay victorias registradas hoy.")
-                st.info(f"💡 Registra partidas ganadas con el tipo: '🟡 Partida ganada (+)' para que aparezcan aquí.")
+                st.info("📭 No hay victorias registradas esta semana.")
+                st.info(f"📅 Semana actual: {inicio_semana_str} - {fin_semana_str}")
         
         # ============================================================
-        # RANKING DEL MES
+        # RANKING DEL DÍA
         # ============================================================
-        elif filtro_rango == "🏆 Ranking del Mes":
-            ranking_df = obtener_ranking_mes(mes_actual, df_movimientos)
-            titulo = f"🏆 RANKING DEL MES ({mes_actual})"
-            subtitulo = "🔥 ¿Quién ganó más partidas este MES?"
+        elif filtro_rango == "🏆 Ranking del Día":
+            ranking_df = obtener_ranking_dia(fecha_hoy_str, df_movimientos)
             
-            st.markdown(f"### {titulo}")
-            st.caption(subtitulo)
-            st.info(f"📅 El ranking se reinicia automáticamente el 1 de cada mes. Estamos en: {mes_actual}")
+            st.markdown(f"### 🏆 RANKING DEL DÍA ({fecha_hoy_str})")
+            st.caption("🔥 ¿Quién ganó más partidas HOY?")
             
             if not ranking_df.empty:
                 stats = obtener_estadisticas_ranking(ranking_df)
@@ -648,32 +592,27 @@ if modo_acceso == "👤 MODO JUGADOR":
                     st.metric("🔥 Máximo", stats["max_victorias"])
                 
                 st.markdown("---")
-                st.markdown("### 🥇 PODIO DE CAMPEONES DEL MES")
+                st.markdown("### 🥇 PODIO DE CAMPEONES DEL DÍA")
                 
                 col_p1, col_p2, col_p3 = st.columns(3)
                 
                 if len(ranking_df) >= 1:
                     with col_p1:
-                        nivel1 = calcular_nivel(ranking_df.iloc[0]["Victorias"])
                         st.markdown(f"""
-                            <div class="gaming-card" style="border-color: #FFD700; border-width: 3px; background: linear-gradient(135deg, #1C1C00 0%, #2D2D00 100%);">
+                            <div class="gaming-card" style="border-color: #FFD700; border-width: 3px;">
                                 <div style="font-size: 50px;">🥇</div>
                                 <div style="font-weight: 900; font-size: 22px; color: #FFD700;">{ranking_df.iloc[0]['Cliente']}</div>
-                                <div style="color: #FFD700; font-size: 14px; font-weight: 700;">{nivel1}</div>
                                 <div style="color: #FFD700; font-size: 32px; font-weight: 900;">{ranking_df.iloc[0]['Victorias']}</div>
                                 <div style="color: #8B949E; font-size: 13px;">Victorias</div>
-                                <div style="color: #FFD700; font-size: 12px; margin-top: 5px;">👑 CAMPEÓN DEL MES</div>
                             </div>
                         """, unsafe_allow_html=True)
                 
                 if len(ranking_df) >= 2:
                     with col_p2:
-                        nivel2 = calcular_nivel(ranking_df.iloc[1]["Victorias"])
                         st.markdown(f"""
-                            <div class="gaming-card" style="border-color: #C0C0C0; border-width: 3px; background: linear-gradient(135deg, #1C1C1C 0%, #2D2D2D 100%);">
+                            <div class="gaming-card" style="border-color: #C0C0C0; border-width: 3px;">
                                 <div style="font-size: 45px;">🥈</div>
                                 <div style="font-weight: 900; font-size: 20px; color: #C0C0C0;">{ranking_df.iloc[1]['Cliente']}</div>
-                                <div style="color: #C0C0C0; font-size: 14px; font-weight: 700;">{nivel2}</div>
                                 <div style="color: #C0C0C0; font-size: 28px; font-weight: 900;">{ranking_df.iloc[1]['Victorias']}</div>
                                 <div style="color: #8B949E; font-size: 13px;">Victorias</div>
                             </div>
@@ -681,20 +620,18 @@ if modo_acceso == "👤 MODO JUGADOR":
                 
                 if len(ranking_df) >= 3:
                     with col_p3:
-                        nivel3 = calcular_nivel(ranking_df.iloc[2]["Victorias"])
                         st.markdown(f"""
-                            <div class="gaming-card" style="border-color: #CD7F32; border-width: 3px; background: linear-gradient(135deg, #1C1C0A 0%, #2D2D0A 100%);">
+                            <div class="gaming-card" style="border-color: #CD7F32; border-width: 3px;">
                                 <div style="font-size: 40px;">🥉</div>
                                 <div style="font-weight: 900; font-size: 18px; color: #CD7F32;">{ranking_df.iloc[2]['Cliente']}</div>
-                                <div style="color: #CD7F32; font-size: 14px; font-weight: 700;">{nivel3}</div>
                                 <div style="color: #CD7F32; font-size: 24px; font-weight: 900;">{ranking_df.iloc[2]['Victorias']}</div>
                                 <div style="color: #8B949E; font-size: 13px;">Victorias</div>
                             </div>
                         """, unsafe_allow_html=True)
                 
-                st.markdown("### 📊 TABLA DE POSICIONES DEL MES")
+                st.markdown("### 📊 TABLA DE POSICIONES DEL DÍA")
                 
-                def color_fila_mes(row):
+                def color_fila_dia(row):
                     if row["Posición"] == 1:
                         return ['background-color: #FFD700; color: #000000; font-weight: bold;'] * len(row)
                     elif row["Posición"] == 2:
@@ -704,25 +641,18 @@ if modo_acceso == "👤 MODO JUGADOR":
                     else:
                         return [''] * len(row)
                 
-                st.dataframe(
-                    ranking_df.style.apply(color_fila_mes, axis=1),
-                    use_container_width=True,
-                    hide_index=True
-                )
+                st.dataframe(ranking_df.style.apply(color_fila_dia, axis=1), use_container_width=True, hide_index=True)
             else:
-                st.info("📭 No hay victorias registradas este mes.")
-                st.info(f"💡 Registra partidas ganadas para que aparezcan aquí.")
+                st.info("📭 No hay victorias registradas hoy.")
         
         # ============================================================
-        # RANKING GLOBAL (HISTÓRICO)
+        # RANKING GLOBAL
         # ============================================================
         elif filtro_rango == "👑 Ranking Global":
             ranking_df = obtener_ranking_global(df_movimientos)
-            titulo = "👑 RANKING GLOBAL HISTÓRICO"
-            subtitulo = "🏆 Los mejores de TODOS los tiempos"
             
-            st.markdown(f"### {titulo}")
-            st.caption(subtitulo)
+            st.markdown("### 👑 RANKING GLOBAL HISTÓRICO")
+            st.caption("🏆 Los mejores de TODOS los tiempos")
             st.info("📊 Este ranking NUNCA se borra. Muestra el historial completo de victorias.")
             
             if not ranking_df.empty:
@@ -747,13 +677,12 @@ if modo_acceso == "👤 MODO JUGADOR":
                     with col_p1:
                         nivel1 = calcular_nivel(ranking_df.iloc[0]["Victorias"])
                         st.markdown(f"""
-                            <div class="gaming-card" style="border-color: #FFD700; border-width: 3px; background: linear-gradient(135deg, #1C1C00 0%, #2D2D00 100%);">
+                            <div class="gaming-card" style="border-color: #FFD700; border-width: 3px;">
                                 <div style="font-size: 50px;">👑</div>
                                 <div style="font-weight: 900; font-size: 22px; color: #FFD700;">{ranking_df.iloc[0]['Cliente']}</div>
                                 <div style="color: #FFD700; font-size: 14px; font-weight: 700;">{nivel1}</div>
                                 <div style="color: #FFD700; font-size: 32px; font-weight: 900;">{ranking_df.iloc[0]['Victorias']}</div>
                                 <div style="color: #8B949E; font-size: 13px;">Victorias</div>
-                                <div style="color: #FFD700; font-size: 12px; margin-top: 5px;">🏆 LEYENDA</div>
                             </div>
                         """, unsafe_allow_html=True)
                 
@@ -761,7 +690,7 @@ if modo_acceso == "👤 MODO JUGADOR":
                     with col_p2:
                         nivel2 = calcular_nivel(ranking_df.iloc[1]["Victorias"])
                         st.markdown(f"""
-                            <div class="gaming-card" style="border-color: #C0C0C0; border-width: 3px; background: linear-gradient(135deg, #1C1C1C 0%, #2D2D2D 100%);">
+                            <div class="gaming-card" style="border-color: #C0C0C0; border-width: 3px;">
                                 <div style="font-size: 45px;">🥈</div>
                                 <div style="font-weight: 900; font-size: 20px; color: #C0C0C0;">{ranking_df.iloc[1]['Cliente']}</div>
                                 <div style="color: #C0C0C0; font-size: 14px; font-weight: 700;">{nivel2}</div>
@@ -774,7 +703,7 @@ if modo_acceso == "👤 MODO JUGADOR":
                     with col_p3:
                         nivel3 = calcular_nivel(ranking_df.iloc[2]["Victorias"])
                         st.markdown(f"""
-                            <div class="gaming-card" style="border-color: #CD7F32; border-width: 3px; background: linear-gradient(135deg, #1C1C0A 0%, #2D2D0A 100%);">
+                            <div class="gaming-card" style="border-color: #CD7F32; border-width: 3px;">
                                 <div style="font-size: 40px;">🥉</div>
                                 <div style="font-weight: 900; font-size: 18px; color: #CD7F32;">{ranking_df.iloc[2]['Cliente']}</div>
                                 <div style="color: #CD7F32; font-size: 14px; font-weight: 700;">{nivel3}</div>
@@ -795,43 +724,35 @@ if modo_acceso == "👤 MODO JUGADOR":
                     else:
                         return [''] * len(row)
                 
-                st.dataframe(
-                    ranking_df.style.apply(color_fila_global, axis=1),
-                    use_container_width=True,
-                    hide_index=True
-                )
+                st.dataframe(ranking_df.style.apply(color_fila_global, axis=1), use_container_width=True, hide_index=True)
             else:
                 st.info("📭 No hay victorias en el historial global.")
         
         # ============================================================
-        # GANADORES MENSUALES
+        # GANADORES SEMANALES
         # ============================================================
         else:
-            st.markdown("### 📊 GANADORES MENSUALES")
-            st.caption("🏆 Historial de campeones mes a mes")
+            st.markdown("### 📊 GANADORES SEMANALES")
+            st.caption("🏆 Historial de campeones semana a semana")
             
             try:
-                sheet_meses = client.open("Ludo_Control_Saldos").worksheet("Ganadores_Mensuales")
-                datos = sheet_meses.get_all_records()
-                df_meses = pd.DataFrame(datos)
+                sheet_semanas = client.open("Ludo_Control_Saldos").worksheet("Ganadores_Semanales")
+                datos = sheet_semanas.get_all_records()
+                df_semanas = pd.DataFrame(datos)
                 
-                if not df_meses.empty:
-                    df_meses = df_meses.sort_values(by="Mes", ascending=False)
+                if not df_semanas.empty:
+                    df_semanas = df_semanas.sort_values(by="Semana", ascending=False)
                     
-                    st.dataframe(
-                        df_meses,
-                        use_container_width=True,
-                        hide_index=True
-                    )
+                    st.dataframe(df_semanas, use_container_width=True, hide_index=True)
                     
-                    ultimo = df_meses.iloc[0]
-                    st.success(f"🏆 **ÚLTIMO GANADOR MENSUAL:** {ultimo['Ganador']} ({ultimo['Mes']}) con {ultimo['Victorias']} victorias")
+                    ultimo = df_semanas.iloc[0]
+                    st.success(f"🏆 **ÚLTIMO GANADOR SEMANAL:** {ultimo['Ganador']} ({ultimo['Semana']}) con {ultimo['Victorias']} victorias")
                 else:
-                    st.info("📭 No hay ganadores mensuales registrados aún.")
-                    st.info("💡 Usa el botón 'CERRAR MES' en el panel de administrador para guardar al ganador.")
+                    st.info("📭 No hay ganadores semanales registrados aún.")
+                    st.info("💡 Usa el botón 'CERRAR SEMANA' en el panel de administrador.")
             except:
-                st.info("📭 No hay ganadores mensuales registrados aún.")
-                st.info("💡 Usa el botón 'CERRAR MES' en el panel de administrador para guardar al ganador.")
+                st.info("📭 No hay ganadores semanales registrados aún.")
+                st.info("💡 Usa el botón 'CERRAR SEMANA' en el panel de administrador.")
 
     # --- TAB 3: RULETA DIARIA (VISTA JUGADOR) ---
     with tab_ruleta:
@@ -875,7 +796,7 @@ if modo_acceso == "👤 MODO JUGADOR":
                         </div>
                     """, unsafe_allow_html=True)
                 else:
-                    st.info("⏳ La ruleta aún no ha sido girada el día de hoy. El administrador la girará al final de la jornada.")
+                    st.info("⏳ La ruleta aún no ha sido girada el día de hoy.")
                     
                     st.markdown("### 📊 Tu progreso")
                     for jugador in clientes_existentes:
@@ -1010,51 +931,50 @@ else:
                         st.rerun()
             else:
                 st.warning("⚠️ Aún no hay jugadores con 3 partidas hoy.")
-                st.info("📌 Los jugadores aparecerán aquí cuando completen 3 partidas jugadas.")
 
-        # --- SECCIÓN CERRAR MES ---
-        with st.expander("📅 CERRAR MES - GUARDAR GANADOR", expanded=False):
+        # --- SECCIÓN CERRAR SEMANA ---
+        with st.expander("📅 CERRAR SEMANA - GUARDAR GANADOR", expanded=False):
             
-            st.markdown("### 📅 CERRAR MES")
-            st.caption(f"📊 Guarda al ganador del mes {mes_actual} y reinicia el ranking mensual")
+            st.markdown("### 📅 CERRAR SEMANA")
+            st.caption(f"📊 Guarda al ganador de la semana {inicio_semana_str} - {fin_semana_str}")
             
-            ranking_mes = obtener_ranking_mes(mes_actual, df_movimientos)
+            ranking_semana = obtener_ranking_semana(df_movimientos)
             
-            if not ranking_mes.empty:
-                st.write("**🏆 TOP 3 DEL MES ACTUAL:**")
+            if not ranking_semana.empty:
+                st.write("**🏆 TOP 3 DE LA SEMANA ACTUAL:**")
                 
                 col1, col2, col3 = st.columns(3)
                 
-                if len(ranking_mes) >= 1:
+                if len(ranking_semana) >= 1:
                     with col1:
-                        st.markdown(f"🥇 **{ranking_mes.iloc[0]['Cliente']}**\n{ranking_mes.iloc[0]['Victorias']} victorias")
-                if len(ranking_mes) >= 2:
+                        st.markdown(f"🥇 **{ranking_semana.iloc[0]['Cliente']}**\n{ranking_semana.iloc[0]['Victorias']} victorias")
+                if len(ranking_semana) >= 2:
                     with col2:
-                        st.markdown(f"🥈 **{ranking_mes.iloc[1]['Cliente']}**\n{ranking_mes.iloc[1]['Victorias']} victorias")
-                if len(ranking_mes) >= 3:
+                        st.markdown(f"🥈 **{ranking_semana.iloc[1]['Cliente']}**\n{ranking_semana.iloc[1]['Victorias']} victorias")
+                if len(ranking_semana) >= 3:
                     with col3:
-                        st.markdown(f"🥉 **{ranking_mes.iloc[2]['Cliente']}**\n{ranking_mes.iloc[2]['Victorias']} victorias")
+                        st.markdown(f"🥉 **{ranking_semana.iloc[2]['Cliente']}**\n{ranking_semana.iloc[2]['Victorias']} victorias")
                 
                 st.markdown("---")
-                st.warning("⚠️ Esta acción guardará al ganador del mes y REINICIARÁ el ranking mensual a 0.")
+                st.warning("⚠️ Esta acción guardará al ganador de la semana y REINICIARÁ el ranking semanal a 0.")
                 
-                if st.button("📅 CERRAR MES Y REINICIAR RANKING", type="primary"):
-                    with st.spinner("Guardando ganador del mes..."):
-                        success, mensaje = guardar_ganador_mes(mes_actual, ranking_mes)
+                if st.button("📅 CERRAR SEMANA Y REINICIAR RANKING", type="primary"):
+                    with st.spinner("Guardando ganador de la semana..."):
+                        success, mensaje = guardar_ganador_semana(semana_key, ranking_semana)
                         st.info(mensaje)
                         
                         if success:
-                            success2, mensaje2 = resetear_ranking_mes(mes_actual, sheet)
+                            success2, mensaje2 = resetear_ranking_semana(sheet)
                             if success2:
                                 st.success(mensaje2)
                                 st.balloons()
-                                st.success(f"🏆 {ranking_mes.iloc[0]['Cliente']} es el CAMPEÓN del mes {mes_actual}!")
+                                st.success(f"🏆 {ranking_semana.iloc[0]['Cliente']} es el CAMPEÓN de la semana!")
                                 time.sleep(2)
                                 st.rerun()
                             else:
                                 st.error(mensaje2)
             else:
-                st.info("📭 No hay victorias este mes. No se puede cerrar el mes.")
+                st.info("📭 No hay victorias esta semana. No se puede cerrar la semana.")
 
         # --- REGISTRO DE MOVIMIENTOS ---
         with st.expander("➕ REGISTRAR NUEVO MOVIMIENTO", expanded=True):
@@ -1284,11 +1204,7 @@ else:
             saldos_df.rename(columns={"Neto": "Saldo Actual ($)"}, inplace=True)
             saldos_df = saldos_df.sort_values(by="Saldo Actual ($)", ascending=False)
 
-            st.dataframe(
-                saldos_df.style.format({"Saldo Actual ($)": "${:,.2f}"}),
-                use_container_width=True,
-                hide_index=True
-            )
+            st.dataframe(saldos_df.style.format({"Saldo Actual ($)": "${:,.2f}"}), use_container_width=True, hide_index=True)
 
         st.markdown("### 📜 HISTORIAL COMPLETO DE REGISTROS")
         if not df_movimientos.empty:
@@ -1299,10 +1215,6 @@ else:
                 if col in df_historial_formateado.columns:
                     df_historial_formateado[col] = df_historial_formateado[col].apply(lambda x: f"${x:,.2f}" if pd.notna(x) else "$0.00")
             
-            st.dataframe(
-                df_historial_formateado,
-                use_container_width=True,
-                hide_index=True
-            )
+            st.dataframe(df_historial_formateado, use_container_width=True, hide_index=True)
     elif password != "":
         st.error("🔒 Contraseña incorrecta.")
